@@ -137,7 +137,6 @@ namespace BimCore {
             window.GetMousePosition(mx, my);
             Ray ray = ScreenToWorldRay(mx, my, window.GetWidth(), window.GetHeight(), camera.GetViewMatrix(), camera.GetProjectionMatrix(), camera.GetPosition());
 
-            // --- FIXED: Pass the active clipping planes so the raycaster ignores sliced geometry! ---
             float cx = selection.showPlaneX ? selection.clipX : kFloatMax;
             float cy = selection.showPlaneY ? selection.clipY : kFloatMax;
             float cz = selection.showPlaneZ ? selection.clipZ : kFloatMax;
@@ -162,8 +161,12 @@ namespace BimCore {
                     so.properties = document->GetElementProperties(so.guid);
                     selection.objects.push_back(so);
                 }
+                selection.selectionChanged = true; // --- NEW: Snap Camera Pivot! ---
             } else {
-                if (!window.IsKeyPressed(config.KeyMultiSelect)) selection.objects.clear();
+                if (!window.IsKeyPressed(config.KeyMultiSelect)) {
+                    selection.objects.clear();
+                    selection.selectionChanged = true;
+                }
             }
         }
         m_mouseWasDown = mouseDown;

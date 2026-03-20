@@ -138,8 +138,15 @@ target_link_libraries(BimCore_SDK PUBLIC imgui glfw webgpu glfw3webgpu IfcOpenSh
 # ==============================================================================
 # 6. THE EDITOR APPLICATION
 # ==============================================================================
-set(EDITOR_SOURCES apps/editor/main.cpp apps/editor/AppUI.cpp apps/editor/InputController.cpp)
-add_executable(BIMCoreEditor ${EDITOR_SOURCES})
+add_executable(BIMCoreEditor
+    apps/editor/main.cpp
+    apps/editor/EditorApp.cpp
+    apps/editor/AppUI.cpp
+    apps/editor/InputController.cpp
+    apps/editor/ui/UIStatusOverlay.cpp
+    apps/editor/ui/UIMainPanel.cpp
+    apps/editor/ui/UIPropertiesPanel.cpp
+)
 target_include_directories(BIMCoreEditor PRIVATE apps/editor sdk/src "${GLM_INCLUDE_DIR}")
 target_link_libraries(BIMCoreEditor PRIVATE BimCore_SDK)
 if(UNIX AND NOT APPLE)

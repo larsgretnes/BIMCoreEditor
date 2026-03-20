@@ -50,6 +50,13 @@ namespace BimCore {
         m_dirty = true;
     }
 
+    void Camera::SetPivot(const glm::vec3& newPivot) {
+        m_pivot = newPivot;
+        // Recalculate distance so the camera stays exactly where it is!
+        m_orbitDistance = glm::length(m_position - m_pivot);
+        m_dirty = true;
+    }
+
     void Camera::ProcessPan(float deltaX, float deltaY) {
         // --- NEW: True CAD Panning Math ---
         float panSpeed = (m_orbitDistance * std::tan(m_fov / 2.0f) * 2.0f) / 1080.0f;

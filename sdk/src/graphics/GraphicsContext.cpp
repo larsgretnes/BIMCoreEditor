@@ -2,6 +2,7 @@
 // BimCore/graphics/GraphicsContext.cpp
 // =============================================================================
 #include "GraphicsContext.h"
+#include "ShaderLibrary.h" // <-- NEW: Include our extracted shaders
 #include "Core.h"
 #include <stdexcept>
 #include <cstring>
@@ -211,7 +212,7 @@ namespace BimCore {
         ubDesc.size  = sizeof(SceneUniforms);
         m_uniformBuffer = wgpuDeviceCreateBuffer(m_device, &ubDesc);
 
-        // Instance storage buffer (up to 1 million transforms — large but GPU-side only)
+        // Instance storage buffer (up to 1 million transforms)
         WGPUBufferDescriptor instDesc = {};
         instDesc.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Storage;
         instDesc.size  = 1'000'000 * sizeof(glm::mat4);
@@ -250,7 +251,7 @@ namespace BimCore {
         bgDesc.entries    = bgEntries;
         m_sceneBindGroup = wgpuDeviceCreateBindGroup(m_device, &bgDesc);
 
-        wgpuBindGroupLayoutRelease(bgl); // bind group keeps its own ref
+        wgpuBindGroupLayoutRelease(bgl);
     }
 
     // =============================================================================
@@ -266,10 +267,7 @@ namespace BimCore {
         return wgpuDeviceCreateShaderModule(m_device, &desc);
     }
 
-    // Shared vertex layout (position, normal, color — each float3)
-    static WGPUVertexBufferLayout MakeVertexBufferLayout(
-        std::vector<WGPUVertexAttribute>& attrs)
-    {
+    static WGPUVertexBufferLayout MakeVertexBufferLayout(std::vector<WGPUVertexAttribute>& attrs) {
         attrs.resize(3);
         attrs[0] = { WGPUVertexFormat_Float32x3, offsetof(BimCore::Vertex, position), 0 };
         attrs[1] = { WGPUVertexFormat_Float32x3, offsetof(BimCore::Vertex, normal),   1 };
@@ -285,336 +283,212 @@ namespace BimCore {
     void GraphicsContext::CreateMainPipeline() {
         BIM_LOG("GPU", "Compiling main + transparent pipelines...");
 
-        static constexpr const char* kMainWGSL = R"(
-struct SceneUniforms {
-    viewProjection : mat4x4<f32>,
-    sunDirection   : vec4<f32>,
-    highlightColor : vec4<f32>,
-    clipDistances  : vec4<f32>,
-    clipActive     : vec4<f32>,
-    lightingMode   : u32,
-    _p1 : u32, _p2 : u32, _p3 : u32,
-};
-@group(0) @binding(0) var<uniform> scene : SceneUniforms;
+        // Uses the centralized shader from ShaderLibrary.h
+        WGPUShaderModule shader = CreateShaderModule(Shaders::kMainWGSL);
 
-struct VertIn  { @location(0) pos : vec3<f32>, @location(1) nor : vec3<f32>, @location(2) col : vec3<f32> };
-struct VertOut { @builtin(position) clip : vec4<f32>, @location(0) nor : vec3<f32>, @location(1) wpos : vec3<f32>, @location(2) col : vec3<f32> };
+        // Pipeline layout
+        WGPUBindGroupLayoutEntry bgle[2] = {};
+        bgle[0].binding               = 0;
+        bgle[0].visibility            = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+        bgle[0].buffer.type           = WGPUBufferBindingType_Uniform;
+        bgle[0].buffer.minBindingSize = sizeof(SceneUniforms);
+        bgle[1].binding               = 1;
+        bgle[1].visibility            = WGPUShaderStage_Vertex;
+        bgle[1].buffer.type           = WGPUBufferBindingType_ReadOnlyStorage;
+        bgle[1].buffer.minBindingSize = sizeof(glm::mat4);
 
-@vertex fn vs_main(v : VertIn) -> VertOut {
-    var o : VertOut;
-    o.wpos = v.pos;
-    o.clip = scene.viewProjection * vec4<f32>(v.pos, 1.0);
-    o.nor  = v.nor;
-    o.col  = v.col;
-    return o;
-}
+        WGPUBindGroupLayoutDescriptor bgld = {};
+        bgld.entryCount = 2; bgld.entries = bgle;
+        WGPUBindGroupLayout bgl = wgpuDeviceCreateBindGroupLayout(m_device, &bgld);
 
-fn shade(in : VertOut) -> vec3<f32> {
-    let dx = dpdx(in.wpos);
-    let dy = dpdy(in.wpos);
-    let faceNormal = normalize(cross(dx, dy));
-    let b  = in.col;
-    if (scene.lightingMode == 0u) {
-        let l1 = normalize(vec3<f32>( 0.7,  0.8,  1.0));
-        let l2 = normalize(vec3<f32>(-0.5, -0.2, -1.0));
-        let d  = abs(dot(faceNormal, l1)) + abs(dot(faceNormal, l2)) * 0.3 + 0.2;
-        return b * clamp(d, 0.0, 1.0);
-    } else {
-        return b * (abs(dot(faceNormal, normalize(scene.sunDirection.xyz))) + 0.1);
-    }
-}
+        WGPUPipelineLayoutDescriptor pld = {};
+        pld.bindGroupLayoutCount = 1; pld.bindGroupLayouts = &bgl;
+        WGPUPipelineLayout pipelineLayout = wgpuDeviceCreatePipelineLayout(m_device, &pld);
 
-fn clip_check(wpos : vec3<f32>) -> bool {
-    if (scene.clipActive.x > 0.5 && wpos.x > scene.clipDistances.x) { return false; }
-    if (scene.clipActive.y > 0.5 && wpos.y > scene.clipDistances.y) { return false; }
-    if (scene.clipActive.z > 0.5 && wpos.z > scene.clipDistances.z) { return false; }
-    return true;
-}
+        std::vector<WGPUVertexAttribute> attrs;
+        WGPUVertexBufferLayout vbl = MakeVertexBufferLayout(attrs);
 
-@fragment fn fs_opaque(in : VertOut) -> @location(0) vec4<f32> {
-    if (!clip_check(in.wpos)) { discard; }
-    return vec4<f32>(shade(in), 1.0);
-}
+        WGPUDepthStencilState ds = {};
+        ds.format             = WGPUTextureFormat_Depth32Float;
+        ds.depthWriteEnabled  = WGPUOptionalBool_True;
+        ds.depthCompare       = WGPUCompareFunction_Less;
 
-@fragment fn fs_transparent(in : VertOut) -> @location(0) vec4<f32> {
-    if (!clip_check(in.wpos)) { discard; }
-    return vec4<f32>(shade(in), 0.35);
-}
-)";
+        WGPUBlendState opaqueBlend = {};
+        opaqueBlend.color = { WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_Zero };
+        opaqueBlend.alpha = { WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_Zero };
 
-WGPUShaderModule shader = CreateShaderModule(kMainWGSL);
+        WGPUColorTargetState opaqueTarget = {};
+        opaqueTarget.format    = m_surfaceFormat;
+        opaqueTarget.blend     = &opaqueBlend;
+        opaqueTarget.writeMask = WGPUColorWriteMask_All;
 
-// Pipeline layout
-WGPUBindGroupLayoutEntry bgle[2] = {};
-bgle[0].binding               = 0;
-bgle[0].visibility            = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
-bgle[0].buffer.type           = WGPUBufferBindingType_Uniform;
-bgle[0].buffer.minBindingSize = sizeof(SceneUniforms);
-bgle[1].binding               = 1;
-bgle[1].visibility            = WGPUShaderStage_Vertex;
-bgle[1].buffer.type           = WGPUBufferBindingType_ReadOnlyStorage;
-bgle[1].buffer.minBindingSize = sizeof(glm::mat4);
+        WGPUFragmentState frag = {};
+        frag.module      = shader;
+        frag.entryPoint  = WGPUStringView{ "fs_opaque", strlen("fs_opaque") };
+        frag.targetCount = 1;
+        frag.targets     = &opaqueTarget;
 
-WGPUBindGroupLayoutDescriptor bgld = {};
-bgld.entryCount = 2; bgld.entries = bgle;
-WGPUBindGroupLayout bgl = wgpuDeviceCreateBindGroupLayout(m_device, &bgld);
+        WGPURenderPipelineDescriptor pd = {};
+        pd.layout                    = pipelineLayout;
+        pd.vertex.module             = shader;
+        pd.vertex.entryPoint         = WGPUStringView{ "vs_main", strlen("vs_main") };
+        pd.vertex.bufferCount        = 1;
+        pd.vertex.buffers            = &vbl;
+        pd.primitive.topology        = WGPUPrimitiveTopology_TriangleList;
+        pd.primitive.cullMode        = WGPUCullMode_Back;
+        pd.primitive.frontFace       = WGPUFrontFace_CCW;
+        pd.depthStencil              = &ds;
+        pd.fragment                  = &frag;
+        pd.multisample.count         = 1;
+        pd.multisample.mask          = ~0u;
+        m_pipeline = wgpuDeviceCreateRenderPipeline(m_device, &pd);
 
-WGPUPipelineLayoutDescriptor pld = {};
-pld.bindGroupLayoutCount = 1; pld.bindGroupLayouts = &bgl;
-WGPUPipelineLayout pipelineLayout = wgpuDeviceCreatePipelineLayout(m_device, &pld);
+        // Transparent variant — alpha blend, depth read-only, fs_transparent entry
+        WGPUBlendState alphaBlend = {};
+        alphaBlend.color = { WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha,           WGPUBlendFactor_OneMinusSrcAlpha };
+        alphaBlend.alpha = { WGPUBlendOperation_Add, WGPUBlendFactor_One,                WGPUBlendFactor_OneMinusSrcAlpha };
 
-std::vector<WGPUVertexAttribute> attrs;
-WGPUVertexBufferLayout vbl = MakeVertexBufferLayout(attrs);
+        WGPUColorTargetState transTarget = opaqueTarget;
+        transTarget.blend = &alphaBlend;
 
-WGPUDepthStencilState ds = {};
-ds.format             = WGPUTextureFormat_Depth32Float;
-ds.depthWriteEnabled  = WGPUOptionalBool_True;
-ds.depthCompare       = WGPUCompareFunction_Less;
+        WGPUFragmentState transFrag = frag;
+        transFrag.entryPoint = WGPUStringView{ "fs_transparent", strlen("fs_transparent") };
+        transFrag.targets    = &transTarget;
 
-WGPUBlendState opaqueBlend = {};
-opaqueBlend.color = { WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_Zero };
-opaqueBlend.alpha = { WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_Zero };
+        WGPUDepthStencilState transDs = ds;
+        transDs.depthWriteEnabled = WGPUOptionalBool_False;
 
-WGPUColorTargetState opaqueTarget = {};
-opaqueTarget.format    = m_surfaceFormat;
-opaqueTarget.blend     = &opaqueBlend;
-opaqueTarget.writeMask = WGPUColorWriteMask_All;
+        WGPURenderPipelineDescriptor tpd = pd;
+        tpd.fragment    = &transFrag;
+        tpd.depthStencil = &transDs;
+        m_transparentPipeline = wgpuDeviceCreateRenderPipeline(m_device, &tpd);
 
-WGPUFragmentState frag = {};
-frag.module      = shader;
-frag.entryPoint  = WGPUStringView{ "fs_opaque", strlen("fs_opaque") };
-frag.targetCount = 1;
-frag.targets     = &opaqueTarget;
-
-WGPURenderPipelineDescriptor pd = {};
-pd.layout                    = pipelineLayout;
-pd.vertex.module             = shader;
-pd.vertex.entryPoint         = WGPUStringView{ "vs_main", strlen("vs_main") };
-pd.vertex.bufferCount        = 1;
-pd.vertex.buffers            = &vbl;
-pd.primitive.topology        = WGPUPrimitiveTopology_TriangleList;
-pd.primitive.cullMode        = WGPUCullMode_Back;
-pd.primitive.frontFace       = WGPUFrontFace_CCW;
-pd.depthStencil              = &ds;
-pd.fragment                  = &frag;
-pd.multisample.count         = 1;
-pd.multisample.mask          = ~0u;
-m_pipeline = wgpuDeviceCreateRenderPipeline(m_device, &pd);
-
-// Transparent variant — alpha blend, depth read-only, fs_transparent entry
-WGPUBlendState alphaBlend = {};
-alphaBlend.color = { WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha,           WGPUBlendFactor_OneMinusSrcAlpha };
-alphaBlend.alpha = { WGPUBlendOperation_Add, WGPUBlendFactor_One,                WGPUBlendFactor_OneMinusSrcAlpha };
-
-WGPUColorTargetState transTarget = opaqueTarget;
-transTarget.blend = &alphaBlend;
-
-WGPUFragmentState transFrag = frag;
-transFrag.entryPoint = WGPUStringView{ "fs_transparent", strlen("fs_transparent") };
-transFrag.targets    = &transTarget;
-
-WGPUDepthStencilState transDs = ds;
-transDs.depthWriteEnabled = WGPUOptionalBool_False;
-
-WGPURenderPipelineDescriptor tpd = pd;
-tpd.fragment    = &transFrag;
-tpd.depthStencil = &transDs;
-m_transparentPipeline = wgpuDeviceCreateRenderPipeline(m_device, &tpd);
-
-wgpuShaderModuleRelease(shader);
-wgpuBindGroupLayoutRelease(bgl);
-wgpuPipelineLayoutRelease(pipelineLayout);
+        wgpuShaderModuleRelease(shader);
+        wgpuBindGroupLayoutRelease(bgl);
+        wgpuPipelineLayoutRelease(pipelineLayout);
     }
 
     void GraphicsContext::CreateHighlightPipeline() {
         BIM_LOG("GPU", "Compiling highlight pipeline...");
+        WGPUShaderModule shader = CreateShaderModule(Shaders::kHighlightWGSL);
 
-        static constexpr const char* kHighlightWGSL = R"(
-struct SceneUniforms {
-    viewProjection : mat4x4<f32>, sunDirection : vec4<f32>, highlightColor : vec4<f32>,
-    clipDistances  : vec4<f32>,   clipActive   : vec4<f32>, lightingMode   : u32,
-    _p1 : u32, _p2 : u32, _p3 : u32,
-};
-@group(0) @binding(0) var<uniform> scene : SceneUniforms;
-struct VertIn  { @location(0) pos : vec3<f32>, @location(1) nor : vec3<f32>, @location(2) col : vec3<f32> };
-struct VertOut { @builtin(position) clip : vec4<f32>, @location(0) wpos : vec3<f32> };
-@vertex fn vs_main(v : VertIn) -> VertOut {
-    var o : VertOut;
-    o.wpos = v.pos;
-    o.clip = scene.viewProjection * vec4<f32>(v.pos, 1.0);
-    return o;
-}
-@fragment fn fs_main(in : VertOut) -> @location(0) vec4<f32> {
-    if (scene.clipActive.x > 0.5 && in.wpos.x > scene.clipDistances.x) { discard; }
-    if (scene.clipActive.y > 0.5 && in.wpos.y > scene.clipDistances.y) { discard; }
-    if (scene.clipActive.z > 0.5 && in.wpos.z > scene.clipDistances.z) { discard; }
-    return scene.highlightColor;
-}
-)";
+        WGPUBindGroupLayoutEntry bgle[2] = {};
+        bgle[0].binding = 0; bgle[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+        bgle[0].buffer.type = WGPUBufferBindingType_Uniform; bgle[0].buffer.minBindingSize = sizeof(SceneUniforms);
+        bgle[1].binding = 1; bgle[1].visibility = WGPUShaderStage_Vertex;
+        bgle[1].buffer.type = WGPUBufferBindingType_ReadOnlyStorage; bgle[1].buffer.minBindingSize = sizeof(glm::mat4);
 
-WGPUShaderModule shader = CreateShaderModule(kHighlightWGSL);
+        WGPUBindGroupLayoutDescriptor bgld = {}; bgld.entryCount = 2; bgld.entries = bgle;
+        WGPUBindGroupLayout bgl = wgpuDeviceCreateBindGroupLayout(m_device, &bgld);
+        WGPUPipelineLayoutDescriptor pld = {}; pld.bindGroupLayoutCount = 1; pld.bindGroupLayouts = &bgl;
+        WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(m_device, &pld);
 
-WGPUBindGroupLayoutEntry bgle[2] = {};
-bgle[0].binding = 0; bgle[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
-bgle[0].buffer.type = WGPUBufferBindingType_Uniform; bgle[0].buffer.minBindingSize = sizeof(SceneUniforms);
-bgle[1].binding = 1; bgle[1].visibility = WGPUShaderStage_Vertex;
-bgle[1].buffer.type = WGPUBufferBindingType_ReadOnlyStorage; bgle[1].buffer.minBindingSize = sizeof(glm::mat4);
+        std::vector<WGPUVertexAttribute> attrs;
+        WGPUVertexBufferLayout vbl = MakeVertexBufferLayout(attrs);
 
-WGPUBindGroupLayoutDescriptor bgld = {}; bgld.entryCount = 2; bgld.entries = bgle;
-WGPUBindGroupLayout bgl = wgpuDeviceCreateBindGroupLayout(m_device, &bgld);
-WGPUPipelineLayoutDescriptor pld = {}; pld.bindGroupLayoutCount = 1; pld.bindGroupLayouts = &bgl;
-WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(m_device, &pld);
+        WGPUBlendState blend = {};
+        blend.color = { WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha };
+        blend.alpha = { WGPUBlendOperation_Add, WGPUBlendFactor_One,      WGPUBlendFactor_OneMinusSrcAlpha };
+        WGPUColorTargetState target = {}; target.format = m_surfaceFormat; target.blend = &blend; target.writeMask = WGPUColorWriteMask_All;
+        WGPUFragmentState frag = {}; frag.module = shader; frag.entryPoint = WGPUStringView{ "fs_main", 7 }; frag.targetCount = 1; frag.targets = &target;
 
-std::vector<WGPUVertexAttribute> attrs;
-WGPUVertexBufferLayout vbl = MakeVertexBufferLayout(attrs);
+        WGPUDepthStencilState ds = {}; ds.format = WGPUTextureFormat_Depth32Float;
+        ds.depthCompare = WGPUCompareFunction_LessEqual; ds.depthWriteEnabled = WGPUOptionalBool_False;
 
-WGPUBlendState blend = {};
-blend.color = { WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha };
-blend.alpha = { WGPUBlendOperation_Add, WGPUBlendFactor_One,      WGPUBlendFactor_OneMinusSrcAlpha };
-WGPUColorTargetState target = {}; target.format = m_surfaceFormat; target.blend = &blend; target.writeMask = WGPUColorWriteMask_All;
-WGPUFragmentState frag = {}; frag.module = shader; frag.entryPoint = WGPUStringView{ "fs_main", 7 }; frag.targetCount = 1; frag.targets = &target;
+        WGPURenderPipelineDescriptor pd = {};
+        pd.layout = layout; pd.vertex.module = shader;
+        pd.vertex.entryPoint = WGPUStringView{ "vs_main", 7 };
+        pd.vertex.bufferCount = 1; pd.vertex.buffers = &vbl;
+        pd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+        pd.primitive.cullMode = WGPUCullMode_Back; pd.primitive.frontFace = WGPUFrontFace_CCW;
+        pd.depthStencil = &ds; pd.fragment = &frag;
+        pd.multisample.count = 1; pd.multisample.mask = ~0u;
+        m_highlightSolidPipeline = wgpuDeviceCreateRenderPipeline(m_device, &pd);
 
-WGPUDepthStencilState ds = {}; ds.format = WGPUTextureFormat_Depth32Float;
-ds.depthCompare = WGPUCompareFunction_LessEqual; ds.depthWriteEnabled = WGPUOptionalBool_False;
+        pd.primitive.topology = WGPUPrimitiveTopology_LineList;
+        m_highlightOutlinePipeline = wgpuDeviceCreateRenderPipeline(m_device, &pd);
 
-WGPURenderPipelineDescriptor pd = {};
-pd.layout = layout; pd.vertex.module = shader;
-pd.vertex.entryPoint = WGPUStringView{ "vs_main", 7 };
-pd.vertex.bufferCount = 1; pd.vertex.buffers = &vbl;
-pd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
-pd.primitive.cullMode = WGPUCullMode_Back; pd.primitive.frontFace = WGPUFrontFace_CCW;
-pd.depthStencil = &ds; pd.fragment = &frag;
-pd.multisample.count = 1; pd.multisample.mask = ~0u;
-m_highlightSolidPipeline = wgpuDeviceCreateRenderPipeline(m_device, &pd);
-
-pd.primitive.topology = WGPUPrimitiveTopology_LineList;
-m_highlightOutlinePipeline = wgpuDeviceCreateRenderPipeline(m_device, &pd);
-
-wgpuShaderModuleRelease(shader);
-wgpuBindGroupLayoutRelease(bgl);
-wgpuPipelineLayoutRelease(layout);
+        wgpuShaderModuleRelease(shader);
+        wgpuBindGroupLayoutRelease(bgl);
+        wgpuPipelineLayoutRelease(layout);
     }
 
     void GraphicsContext::CreateAABBPipeline() {
         BIM_LOG("GPU", "Compiling AABB pipeline...");
+        WGPUShaderModule shader = CreateShaderModule(Shaders::kAABBWGSL);
 
-        static constexpr const char* kAABBWGSL = R"(
-struct SceneUniforms {
-    viewProjection : mat4x4<f32>, sunDirection : vec4<f32>, highlightColor : vec4<f32>,
-    clipDistances  : vec4<f32>,   clipActive   : vec4<f32>, lightingMode   : u32,
-    _p1 : u32, _p2 : u32, _p3 : u32,
-};
-@group(0) @binding(0) var<uniform> scene : SceneUniforms;
-struct VertIn  { @location(0) pos : vec3<f32>, @location(1) nor : vec3<f32>, @location(2) col : vec3<f32> };
-struct VertOut { @builtin(position) clip : vec4<f32>, @location(0) wpos : vec3<f32> };
-@vertex fn vs_main(v : VertIn) -> VertOut {
-    var o : VertOut; o.wpos = v.pos;
-    o.clip = scene.viewProjection * vec4<f32>(v.pos, 1.0);
-    return o;
-}
-@fragment fn fs_main(in : VertOut) -> @location(0) vec4<f32> {
-    if (scene.clipActive.x > 0.5 && in.wpos.x > scene.clipDistances.x) { discard; }
-    if (scene.clipActive.y > 0.5 && in.wpos.y > scene.clipDistances.y) { discard; }
-    if (scene.clipActive.z > 0.5 && in.wpos.z > scene.clipDistances.z) { discard; }
-    return vec4<f32>(1.0, 0.65, 0.0, 1.0);
-}
-)";
+        WGPUBindGroupLayoutEntry bgle[2] = {};
+        bgle[0].binding = 0; bgle[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+        bgle[0].buffer.type = WGPUBufferBindingType_Uniform; bgle[0].buffer.minBindingSize = sizeof(SceneUniforms);
+        bgle[1].binding = 1; bgle[1].visibility = WGPUShaderStage_Vertex;
+        bgle[1].buffer.type = WGPUBufferBindingType_ReadOnlyStorage; bgle[1].buffer.minBindingSize = sizeof(glm::mat4);
 
-WGPUShaderModule shader = CreateShaderModule(kAABBWGSL);
+        WGPUBindGroupLayoutDescriptor bgld = {}; bgld.entryCount = 2; bgld.entries = bgle;
+        WGPUBindGroupLayout bgl = wgpuDeviceCreateBindGroupLayout(m_device, &bgld);
+        WGPUPipelineLayoutDescriptor pld = {}; pld.bindGroupLayoutCount = 1; pld.bindGroupLayouts = &bgl;
+        WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(m_device, &pld);
 
-WGPUBindGroupLayoutEntry bgle[2] = {};
-bgle[0].binding = 0; bgle[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
-bgle[0].buffer.type = WGPUBufferBindingType_Uniform; bgle[0].buffer.minBindingSize = sizeof(SceneUniforms);
-bgle[1].binding = 1; bgle[1].visibility = WGPUShaderStage_Vertex;
-bgle[1].buffer.type = WGPUBufferBindingType_ReadOnlyStorage; bgle[1].buffer.minBindingSize = sizeof(glm::mat4);
+        std::vector<WGPUVertexAttribute> attrs;
+        WGPUVertexBufferLayout vbl = MakeVertexBufferLayout(attrs);
 
-WGPUBindGroupLayoutDescriptor bgld = {}; bgld.entryCount = 2; bgld.entries = bgle;
-WGPUBindGroupLayout bgl = wgpuDeviceCreateBindGroupLayout(m_device, &bgld);
-WGPUPipelineLayoutDescriptor pld = {}; pld.bindGroupLayoutCount = 1; pld.bindGroupLayouts = &bgl;
-WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(m_device, &pld);
+        WGPUColorTargetState target = {}; target.format = m_surfaceFormat; target.writeMask = WGPUColorWriteMask_All;
+        WGPUFragmentState frag = {}; frag.module = shader; frag.entryPoint = WGPUStringView{ "fs_main", 7 }; frag.targetCount = 1; frag.targets = &target;
+        WGPUDepthStencilState ds = {}; ds.format = WGPUTextureFormat_Depth32Float;
+        ds.depthCompare = WGPUCompareFunction_LessEqual; ds.depthWriteEnabled = WGPUOptionalBool_False;
 
-std::vector<WGPUVertexAttribute> attrs;
-WGPUVertexBufferLayout vbl = MakeVertexBufferLayout(attrs);
+        WGPURenderPipelineDescriptor pd = {};
+        pd.layout = layout; pd.vertex.module = shader;
+        pd.vertex.entryPoint = WGPUStringView{ "vs_main", 7 };
+        pd.vertex.bufferCount = 1; pd.vertex.buffers = &vbl;
+        pd.primitive.topology = WGPUPrimitiveTopology_LineList;
+        pd.depthStencil = &ds; pd.fragment = &frag;
+        pd.multisample.count = 1; pd.multisample.mask = ~0u;
+        m_aabbPipeline = wgpuDeviceCreateRenderPipeline(m_device, &pd);
 
-WGPUColorTargetState target = {}; target.format = m_surfaceFormat; target.writeMask = WGPUColorWriteMask_All;
-WGPUFragmentState frag = {}; frag.module = shader; frag.entryPoint = WGPUStringView{ "fs_main", 7 }; frag.targetCount = 1; frag.targets = &target;
-WGPUDepthStencilState ds = {}; ds.format = WGPUTextureFormat_Depth32Float;
-ds.depthCompare = WGPUCompareFunction_LessEqual; ds.depthWriteEnabled = WGPUOptionalBool_False;
-
-WGPURenderPipelineDescriptor pd = {};
-pd.layout = layout; pd.vertex.module = shader;
-pd.vertex.entryPoint = WGPUStringView{ "vs_main", 7 };
-pd.vertex.bufferCount = 1; pd.vertex.buffers = &vbl;
-pd.primitive.topology = WGPUPrimitiveTopology_LineList;
-pd.depthStencil = &ds; pd.fragment = &frag;
-pd.multisample.count = 1; pd.multisample.mask = ~0u;
-m_aabbPipeline = wgpuDeviceCreateRenderPipeline(m_device, &pd);
-
-wgpuShaderModuleRelease(shader);
-wgpuBindGroupLayoutRelease(bgl);
-wgpuPipelineLayoutRelease(layout);
+        wgpuShaderModuleRelease(shader);
+        wgpuBindGroupLayoutRelease(bgl);
+        wgpuPipelineLayoutRelease(layout);
     }
 
     void GraphicsContext::CreateGlassPipeline() {
         BIM_LOG("GPU", "Compiling glass clipping-plane pipeline...");
+        WGPUShaderModule shader = CreateShaderModule(Shaders::kGlassWGSL);
 
-        static constexpr const char* kGlassWGSL = R"(
-struct SceneUniforms {
-    viewProjection : mat4x4<f32>, sunDirection : vec4<f32>, highlightColor : vec4<f32>,
-    clipDistances  : vec4<f32>,   clipActive   : vec4<f32>, lightingMode   : u32,
-    _p1 : u32, _p2 : u32, _p3 : u32,
-};
-@group(0) @binding(0) var<uniform> scene : SceneUniforms;
-struct VertIn  { @location(0) pos : vec3<f32>, @location(1) nor : vec3<f32>, @location(2) col : vec3<f32> };
-struct VertOut { @builtin(position) clip : vec4<f32>, @location(0) col : vec3<f32> };
-@vertex fn vs_main(v : VertIn) -> VertOut {
-    var o : VertOut;
-    o.clip = scene.viewProjection * vec4<f32>(v.pos, 1.0);
-    o.col  = v.col;
-    return o;
-}
-@fragment fn fs_main(in : VertOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.col, 0.25);
-}
-)";
+        WGPUBindGroupLayoutEntry bgle[2] = {};
+        bgle[0].binding = 0; bgle[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+        bgle[0].buffer.type = WGPUBufferBindingType_Uniform; bgle[0].buffer.minBindingSize = sizeof(SceneUniforms);
+        bgle[1].binding = 1; bgle[1].visibility = WGPUShaderStage_Vertex;
+        bgle[1].buffer.type = WGPUBufferBindingType_ReadOnlyStorage; bgle[1].buffer.minBindingSize = sizeof(glm::mat4);
 
-WGPUShaderModule shader = CreateShaderModule(kGlassWGSL);
+        WGPUBindGroupLayoutDescriptor bgld = {}; bgld.entryCount = 2; bgld.entries = bgle;
+        WGPUBindGroupLayout bgl = wgpuDeviceCreateBindGroupLayout(m_device, &bgld);
+        WGPUPipelineLayoutDescriptor pld = {}; pld.bindGroupLayoutCount = 1; pld.bindGroupLayouts = &bgl;
+        WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(m_device, &pld);
 
-WGPUBindGroupLayoutEntry bgle[2] = {};
-bgle[0].binding = 0; bgle[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
-bgle[0].buffer.type = WGPUBufferBindingType_Uniform; bgle[0].buffer.minBindingSize = sizeof(SceneUniforms);
-bgle[1].binding = 1; bgle[1].visibility = WGPUShaderStage_Vertex;
-bgle[1].buffer.type = WGPUBufferBindingType_ReadOnlyStorage; bgle[1].buffer.minBindingSize = sizeof(glm::mat4);
+        std::vector<WGPUVertexAttribute> attrs;
+        WGPUVertexBufferLayout vbl = MakeVertexBufferLayout(attrs);
 
-WGPUBindGroupLayoutDescriptor bgld = {}; bgld.entryCount = 2; bgld.entries = bgle;
-WGPUBindGroupLayout bgl = wgpuDeviceCreateBindGroupLayout(m_device, &bgld);
-WGPUPipelineLayoutDescriptor pld = {}; pld.bindGroupLayoutCount = 1; pld.bindGroupLayouts = &bgl;
-WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(m_device, &pld);
+        WGPUBlendState blend = {};
+        blend.color = { WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha };
+        blend.alpha = { WGPUBlendOperation_Add, WGPUBlendFactor_One,      WGPUBlendFactor_OneMinusSrcAlpha };
+        WGPUColorTargetState target = {}; target.format = m_surfaceFormat; target.blend = &blend; target.writeMask = WGPUColorWriteMask_All;
+        WGPUFragmentState frag = {}; frag.module = shader; frag.entryPoint = WGPUStringView{ "fs_main", 7 }; frag.targetCount = 1; frag.targets = &target;
+        WGPUDepthStencilState ds = {}; ds.format = WGPUTextureFormat_Depth32Float;
+        ds.depthCompare = WGPUCompareFunction_LessEqual; ds.depthWriteEnabled = WGPUOptionalBool_False;
 
-std::vector<WGPUVertexAttribute> attrs;
-WGPUVertexBufferLayout vbl = MakeVertexBufferLayout(attrs);
+        WGPURenderPipelineDescriptor pd = {};
+        pd.layout = layout; pd.vertex.module = shader;
+        pd.vertex.entryPoint = WGPUStringView{ "vs_main", 7 };
+        pd.vertex.bufferCount = 1; pd.vertex.buffers = &vbl;
+        pd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+        pd.primitive.cullMode = WGPUCullMode_None; // Glass is double-sided
+        pd.depthStencil = &ds; pd.fragment = &frag;
+        pd.multisample.count = 1; pd.multisample.mask = ~0u;
+        m_glassPipeline = wgpuDeviceCreateRenderPipeline(m_device, &pd);
 
-WGPUBlendState blend = {};
-blend.color = { WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha };
-blend.alpha = { WGPUBlendOperation_Add, WGPUBlendFactor_One,      WGPUBlendFactor_OneMinusSrcAlpha };
-WGPUColorTargetState target = {}; target.format = m_surfaceFormat; target.blend = &blend; target.writeMask = WGPUColorWriteMask_All;
-WGPUFragmentState frag = {}; frag.module = shader; frag.entryPoint = WGPUStringView{ "fs_main", 7 }; frag.targetCount = 1; frag.targets = &target;
-WGPUDepthStencilState ds = {}; ds.format = WGPUTextureFormat_Depth32Float;
-ds.depthCompare = WGPUCompareFunction_LessEqual; ds.depthWriteEnabled = WGPUOptionalBool_False;
-
-WGPURenderPipelineDescriptor pd = {};
-pd.layout = layout; pd.vertex.module = shader;
-pd.vertex.entryPoint = WGPUStringView{ "vs_main", 7 };
-pd.vertex.bufferCount = 1; pd.vertex.buffers = &vbl;
-pd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
-pd.primitive.cullMode = WGPUCullMode_None; // Glass is double-sided
-pd.depthStencil = &ds; pd.fragment = &frag;
-pd.multisample.count = 1; pd.multisample.mask = ~0u;
-m_glassPipeline = wgpuDeviceCreateRenderPipeline(m_device, &pd);
-
-wgpuShaderModuleRelease(shader);
-wgpuBindGroupLayoutRelease(bgl);
-wgpuPipelineLayoutRelease(layout);
+        wgpuShaderModuleRelease(shader);
+        wgpuBindGroupLayoutRelease(bgl);
+        wgpuPipelineLayoutRelease(layout);
     }
 
     void GraphicsContext::AllocateGeometryBuffers() {
@@ -788,7 +662,6 @@ wgpuPipelineLayoutRelease(layout);
                             float cr, float cg, float cb)
         {
             uint32_t i = static_cast<uint32_t>(verts.size());
-            // Build a quad depending on which axis the plane is normal to
             Vertex v = {}; v.normal[0]=nx; v.normal[1]=ny; v.normal[2]=nz;
             v.color[0]=cr; v.color[1]=cg; v.color[2]=cb;
             if (nx != 0.0f) {
@@ -869,7 +742,7 @@ wgpuPipelineLayoutRelease(layout);
             wgpuRenderPassEncoderDrawIndexed(rp, m_activeTransparentIndexCount, 1, 0, 0, 0);
         }
 
-        // 3. Highlight overlay — uses original static index buffer so offsets are stable
+        // 3. Highlight overlay
         if (m_hasHighlight && !m_highlightRanges.empty() && m_vertexBuffer && m_indexBuffer) {
             WGPURenderPipeline hlPipeline = (m_highlightStyle == 1)
             ? m_highlightOutlinePipeline
@@ -930,7 +803,6 @@ wgpuPipelineLayoutRelease(layout);
         fontCfg.PixelSnapH      = true;
         fontCfg.GlyphMinAdvanceX = 14.0f;
         static const ImWchar iconRanges[] = { 0xe000, 0xf8ff, 0 };
-        // Font file is copied next to the exe by CMake post-build step
         io.Fonts->AddFontFromFileTTF("fa-solid-900.ttf", 14.0f, &fontCfg, iconRanges);
 
         ImGui::StyleColorsDark();

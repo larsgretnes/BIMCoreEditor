@@ -45,3 +45,6 @@ _deps/
 # OS Generated
 .DS_Store
 Thumbs.db
+
+# LKG
+imgui.ini

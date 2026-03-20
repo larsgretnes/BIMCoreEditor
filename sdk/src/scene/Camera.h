@@ -31,10 +31,10 @@ namespace BimCore {
 
         glm::vec3 GetPosition() const { return m_position; }
 
-        void SetPivot(const glm::vec3& pivot) { m_pivot = pivot; m_dirty = true; }
         // --- NEW: Frame Selection ---
         void FocusOn(const glm::vec3& center, float radius);
         void ResetView(const glm::vec3& center, float radius, float targetYaw, float targetPitch); // <-- NEW
+        void SetPivot(const glm::vec3& newPivot);
 
     private:
         void UpdateCameraVectors();
