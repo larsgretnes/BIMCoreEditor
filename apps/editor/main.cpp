@@ -76,7 +76,6 @@ int main() {
     std::shared_ptr<BimDocument> pendingDoc = nullptr;
     std::mutex docMutex;
 
-    // Path Tracking
     std::string currentFilename = "";
     std::string currentFileDirectory = "";
 
@@ -134,12 +133,24 @@ int main() {
             if (pendingDoc) {
                 document = pendingDoc;
                 pendingDoc = nullptr;
-                graphics.UploadMesh(document->GetGeometry().vertices, document->GetGeometry().indices);
+                auto& geom = document->GetGeometry();
+                graphics.UploadMesh(geom.vertices, geom.indices);
                 globalLoadState.isLoaded.store(true);
-                camera.FocusOn(glm::vec3(document->GetGeometry().center[0], document->GetGeometry().center[1], document->GetGeometry().center[2]), 50.0f);
+                camera.FocusOn(glm::vec3(geom.center[0], geom.center[1], geom.center[2]), 50.0f);
 
                 std::string title = "BIMCore Editor v0.1 - " + currentFilename;
                 glfwSetWindowTitle(window.GetNativeWindow(), title.c_str());
+
+                uiSystem.state.explodeFactor = 0.0f;
+                uiSystem.state.updateGeometry = true;
+
+                // Initialize clip distances to safely envelope the whole model by default
+                uiSystem.state.clipX = geom.maxBounds[0] + 0.1f;
+                uiSystem.state.clipY = geom.maxBounds[1] + 0.1f;
+                uiSystem.state.clipZ = geom.maxBounds[2] + 0.1f;
+
+                memset(uiSystem.state.globalSearchBuf, 0, sizeof(uiSystem.state.globalSearchBuf));
+                memset(uiSystem.state.localSearchBuf, 0, sizeof(uiSystem.state.localSearchBuf));
 
                 uiSystem.state.originalProperties.clear();
                 uiSystem.state.deletedProperties.clear();
@@ -175,9 +186,6 @@ int main() {
             }
         }
 
-        // =====================================================================
-        // SAVE HOOK & IN-MEMORY RESET
-        // =====================================================================
         if (uiSystem.state.triggerSave && document) {
             uiSystem.state.triggerSave = false;
 
@@ -186,38 +194,31 @@ int main() {
             std::string savePath = saveDialog.result();
 
             if (!savePath.empty()) {
-                // 1. Permanently remove soft-deleted objects from AST and RenderMesh
                 for (const auto& guid : uiSystem.state.deletedObjects) {
                     document->DeleteElement(guid);
                     uiSystem.state.hiddenObjects.erase(guid);
                 }
 
-                // 2. Flush all edited properties into the AST & Reset Document Ledger
                 document->CommitASTChanges();
 
-                // 3. Export the fresh AST to disk
                 std::thread([&, savePath, doc = document]() {
                     bool success = IfcExporter::ExportIFC(doc, savePath, &globalLoadState);
-                    if (success) {
-                        std::cout << "[BIMCore] File saved successfully to " << savePath << "\n";
-                    }
+                    if (success) std::cout << "[BIMCore] File saved successfully to " << savePath << "\n";
                 }).detach();
 
-                // 4. Clear all UI "Edited/Deleted" history trackers instantly
-                uiSystem.state.originalProperties.clear();
-                uiSystem.state.deletedProperties.clear();
-                uiSystem.state.deletedObjects.clear();
-                uiSystem.state.objects.clear();
-                uiSystem.state.cachedNames.clear();
-                uiSystem.state.groupsBuilt = false;
+                    uiSystem.state.originalProperties.clear();
+                    uiSystem.state.deletedProperties.clear();
+                    uiSystem.state.deletedObjects.clear();
+                    uiSystem.state.objects.clear();
+                    uiSystem.state.cachedNames.clear();
+                    uiSystem.state.groupsBuilt = false;
 
-                // Update Window Path
-                size_t pos = savePath.find_last_of("/\\");
-                currentFilename = (pos != std::string::npos) ? savePath.substr(pos + 1) : savePath;
-                currentFileDirectory = (pos != std::string::npos) ? savePath.substr(0, pos + 1) : "";
+                    size_t pos = savePath.find_last_of("/\\");
+                    currentFilename = (pos != std::string::npos) ? savePath.substr(pos + 1) : savePath;
+                    currentFileDirectory = (pos != std::string::npos) ? savePath.substr(0, pos + 1) : "";
 
-                std::string title = "BIMCore Editor v0.1 - " + currentFilename;
-                glfwSetWindowTitle(window.GetNativeWindow(), title.c_str());
+                    std::string title = "BIMCore Editor v0.1 - " + currentFilename;
+                    glfwSetWindowTitle(window.GetNativeWindow(), title.c_str());
             }
         }
 
@@ -231,19 +232,25 @@ int main() {
             }
 
             // =====================================================================
-            // THE EXPLODE MATH (CPU-Side)
+            // UPDATE GEOMETRY & MAP SLIDER PERCENTAGES TO NEW BOUNDS
             // =====================================================================
             if (uiSystem.state.updateGeometry) {
                 auto& mesh = document->GetGeometry();
-                
-                // 1. Reset mesh back to its original state
+
+                // 1. Calculate the percentage of where the slider handles were
+                float oldSMinX = mesh.minBounds[0] - 0.1f; float oldSMaxX = mesh.maxBounds[0] + 0.1f;
+                float oldSMinY = mesh.minBounds[1] - 0.1f; float oldSMaxY = mesh.maxBounds[1] + 0.1f;
+                float oldSMinZ = mesh.minBounds[2] - 0.1f; float oldSMaxZ = mesh.maxBounds[2] + 0.1f;
+
+                float pctX = std::clamp((uiSystem.state.clipX - oldSMinX) / (oldSMaxX - oldSMinX), 0.0f, 1.0f);
+                float pctY = std::clamp((uiSystem.state.clipY - oldSMinY) / (oldSMaxY - oldSMinY), 0.0f, 1.0f);
+                float pctZ = std::clamp((uiSystem.state.clipZ - oldSMinZ) / (oldSMaxZ - oldSMinZ), 0.0f, 1.0f);
+
+                // 2. Perform the CPU-side Explode Math
                 mesh.vertices = mesh.originalVertices;
 
-                // 2. Apply explode offsets if the slider is > 0
                 if (uiSystem.state.explodeFactor > 0.01f) {
                     glm::vec3 globalCenter(mesh.center[0], mesh.center[1], mesh.center[2]);
-                    
-                    // Keep track of shifted vertices so we don't translate shared triangle points twice
                     std::vector<bool> shifted(mesh.vertices.size(), false);
 
                     for (const auto& sub : mesh.subMeshes) {
@@ -263,12 +270,33 @@ int main() {
                     }
                 }
 
-                // 3. Upload the shifted vertices to the GPU
+                // 3. Recalculate New Full Bounds!
+                for (int j=0; j<3; ++j) {
+                    mesh.minBounds[j] = kFloatMax;
+                    mesh.maxBounds[j] = kFloatMin;
+                }
+                for (const auto& v : mesh.vertices) {
+                    mesh.minBounds[0] = std::min(mesh.minBounds[0], v.position[0]);
+                    mesh.minBounds[1] = std::min(mesh.minBounds[1], v.position[1]);
+                    mesh.minBounds[2] = std::min(mesh.minBounds[2], v.position[2]);
+                    mesh.maxBounds[0] = std::max(mesh.maxBounds[0], v.position[0]);
+                    mesh.maxBounds[1] = std::max(mesh.maxBounds[1], v.position[1]);
+                    mesh.maxBounds[2] = std::max(mesh.maxBounds[2], v.position[2]);
+                }
+
+                // 4. Remap sliders dynamically into the newly expanded space!
+                float newSMinX = mesh.minBounds[0] - 0.1f; float newSMaxX = mesh.maxBounds[0] + 0.1f;
+                float newSMinY = mesh.minBounds[1] - 0.1f; float newSMaxY = mesh.maxBounds[1] + 0.1f;
+                float newSMinZ = mesh.minBounds[2] - 0.1f; float newSMaxZ = mesh.maxBounds[2] + 0.1f;
+
+                uiSystem.state.clipX = newSMinX + pctX * (newSMaxX - newSMinX);
+                uiSystem.state.clipY = newSMinY + pctY * (newSMaxY - newSMinY);
+                uiSystem.state.clipZ = newSMinZ + pctZ * (newSMaxZ - newSMinZ);
+
                 graphics.UpdateGeometry(mesh.vertices);
                 uiSystem.state.updateGeometry = false;
             }
 
-            // --- Visibility and Highlight Updates ---
             std::vector<uint32_t> solid, trans;
             for (const auto& sub : document->GetGeometry().subMeshes) {
                 if (uiSystem.state.hiddenObjects.count(sub.guid)) continue;
@@ -284,28 +312,26 @@ int main() {
             } else {
                 graphics.SetHighlight(false, {}, 0);
             }
-            
-            // --- Sync Clipping Planes to GPU ---
+
+            // --- DRAW CLIPPING GLASS PLANES ---
             graphics.SetClippingPlanes(
-                uiSystem.state.showPlaneX, uiSystem.state.clipX,
-                uiSystem.state.showPlaneY, uiSystem.state.clipY,
-                uiSystem.state.showPlaneZ, uiSystem.state.clipZ,
+                uiSystem.state.showPlaneX, uiSystem.state.clipX, uiSystem.state.planeColorX,
+                uiSystem.state.showPlaneY, uiSystem.state.clipY, uiSystem.state.planeColorY,
+                uiSystem.state.showPlaneZ, uiSystem.state.clipZ, uiSystem.state.planeColorZ,
                 glm::vec3(document->GetGeometry().minBounds[0], document->GetGeometry().minBounds[1], document->GetGeometry().minBounds[2]),
-                glm::vec3(document->GetGeometry().maxBounds[0], document->GetGeometry().maxBounds[1], document->GetGeometry().maxBounds[2])
+                                       glm::vec3(document->GetGeometry().maxBounds[0], document->GetGeometry().maxBounds[1], document->GetGeometry().maxBounds[2])
             );
         }
 
-        // =====================================================================
-        // UNIFORM DATA UPLOAD
-        // =====================================================================
         SceneUniforms scene{};
         scene.viewProjection = camera.GetViewProjectionMatrix();
         scene.lightingMode = currentLightMode;
         scene.highlightColor = uiSystem.state.color;
-        
-        scene.clipActive.x = uiSystem.state.showPlaneX ? 1.0f : 0.0f;
-        scene.clipActive.y = uiSystem.state.showPlaneY ? 1.0f : 0.0f;
-        scene.clipActive.z = uiSystem.state.showPlaneZ ? 1.0f : 0.0f;
+
+        // --- SHADER CLIPPING MATH IS ALWAYS ACTIVE ---
+        scene.clipActive.x = 1.0f;
+        scene.clipActive.y = 1.0f;
+        scene.clipActive.z = 1.0f;
         scene.clipDistances.x = uiSystem.state.clipX;
         scene.clipDistances.y = uiSystem.state.clipY;
         scene.clipDistances.z = uiSystem.state.clipZ;

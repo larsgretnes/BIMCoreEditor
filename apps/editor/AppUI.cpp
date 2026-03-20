@@ -47,22 +47,16 @@ namespace BimCore {
         ImGuiIO& io = ImGui::GetIO();
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
 
-        // ---------------------------------------------------------------------
-        // FLY MODE HUD OVERLAY (Always renders if active)
-        // ---------------------------------------------------------------------
         if (isFlightMode) {
             io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
 
             ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, viewport->WorkPos.y + 20.0f), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
-            ImGui::SetNextWindowBgAlpha(0.65f); // Transparent background
-            ImGui::Begin("FlyModeOverlay", nullptr, 
-                ImGuiWindowFlags_NoDecoration | 
-                ImGuiWindowFlags_AlwaysAutoResize | 
-                ImGuiWindowFlags_NoSavedSettings | 
-                ImGuiWindowFlags_NoFocusOnAppearing | 
-                ImGuiWindowFlags_NoNav | 
-                ImGuiWindowFlags_NoMove);
-                
+            ImGui::SetNextWindowBgAlpha(0.65f);
+            ImGui::Begin("FlyModeOverlay", nullptr,
+                         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                         ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove);
+
             ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), ICON_FA_ARROWS_ALT "  FLY MODE ACTIVE");
             ImGui::Text("Press F1 to unlock cursor");
             ImGui::End();
@@ -73,6 +67,8 @@ namespace BimCore {
             return;
         }
 
+        ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.5f, 0.5f));
+
         bool editingActiveAtStartOfFrame = !selection.activeEditGuid.empty();
         bool isActivelyLoading = selection.loadState && !selection.loadState->isLoaded.load() && selection.loadState->progress.load() > 0.0f;
 
@@ -80,6 +76,9 @@ namespace BimCore {
         const float rightPanelWidth = 450.0f;
         const float statsPanelHeight = 150.0f;
         const float mainPanelHeight = viewport->WorkSize.y - statsPanelHeight;
+
+        // Base square dimension for standard grid icons (1.0x scale)
+        ImVec2 sqBtn(ImGui::GetFrameHeight(), ImGui::GetFrameHeight());
 
         auto handleShiftSelection = [&](int visualIdx, uint32_t meshIdx, const std::string& groupName, const std::vector<uint32_t>& currentArray, const std::vector<RenderSubMesh>& subMeshes) {
             if (io.KeyShift && selection.lastClickedVisualIndex != -1 && selection.lastClickedGroup == groupName) {
@@ -119,37 +118,46 @@ namespace BimCore {
 
         ImGui::Begin("Main Menu", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove);
 
-        if (ImGui::Button(ICON_FA_FOLDER_OPEN)) selection.triggerLoad = true;
+        ImGui::SetWindowFontScale(1.5f);
+
+        float bigBtnDim = ImGui::GetFrameHeight();
+        ImVec2 bigBtnSize(bigBtnDim, bigBtnDim);
+
+        if (ImGui::Button(ICON_FA_FOLDER_OPEN, bigBtnSize)) selection.triggerLoad = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open");
         ImGui::SameLine();
-        if (ImGui::Button(ICON_FA_SAVE)) selection.triggerSave = true;
+        if (ImGui::Button(ICON_FA_SAVE, bigBtnSize)) selection.triggerSave = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save As");
 
-        float rightButtonGroupWidth = 100.0f;
+        float spacing = ImGui::GetStyle().ItemSpacing.x;
+        float rightButtonGroupWidth = (bigBtnDim * 3.0f) + (spacing * 2.0f);
         float cursorX = ImGui::GetWindowContentRegionMax().x - rightButtonGroupWidth;
+
         if (cursorX > ImGui::GetCursorPosX()) ImGui::SameLine(cursorX);
         else ImGui::SameLine();
 
         auto drawToolBtn = [&](InteractionTool tool, const char* icon, const char* id) {
             if (selection.activeTool == tool) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-            if (ImGui::Button(icon)) selection.activeTool = tool;
+            if (ImGui::Button(icon, bigBtnSize)) selection.activeTool = tool;
             if (selection.activeTool == tool) ImGui::PopStyleColor();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", id);
         };
 
-        drawToolBtn(InteractionTool::Select, ICON_FA_MOUSE_POINTER, "Select (1)"); ImGui::SameLine();
-        drawToolBtn(InteractionTool::Pan, ICON_FA_ARROWS_ALT, "Pan (2)"); ImGui::SameLine();
-        drawToolBtn(InteractionTool::Orbit, ICON_FA_SYNC, "Orbit (3)");
+            drawToolBtn(InteractionTool::Select, ICON_FA_MOUSE_POINTER, "Select (1)"); ImGui::SameLine();
+            drawToolBtn(InteractionTool::Pan, ICON_FA_ARROWS_ALT, "Pan (2)"); ImGui::SameLine();
+            drawToolBtn(InteractionTool::Orbit, ICON_FA_SYNC, "Orbit (3)");
 
-        ImGui::Spacing();
-        if (ImGui::Button(ICON_FA_TIMES_CIRCLE)) { selection.objects.clear(); }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear selected");
-        ImGui::SameLine();
-        if (ImGui::Button(ICON_FA_EYE)) { selection.hiddenObjects.clear(); selection.hiddenStateChanged = true; }
+            ImGui::Spacing();
+            if (ImGui::Button(ICON_FA_TIMES_CIRCLE, bigBtnSize)) { selection.objects.clear(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear selected");
+            ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_EYE, bigBtnSize)) { selection.hiddenObjects.clear(); selection.hiddenStateChanged = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show all");
         ImGui::SameLine();
-        if (ImGui::Button(ICON_FA_HISTORY)) { ImGui::OpenPopup("Reset Model"); }
+        if (ImGui::Button(ICON_FA_HISTORY, bigBtnSize)) { ImGui::OpenPopup("Reset Model"); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset");
+
+        ImGui::SetWindowFontScale(1.0f);
 
         if (ImGui::BeginPopupModal("Reset Model", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("This will reset all items back to original.\nAre you sure?");
@@ -160,7 +168,17 @@ namespace BimCore {
                     for (auto& [guid, props] : selection.originalProperties) {
                         for (auto& [k, v] : props) document->UpdateElementProperty(guid, k, v);
                     }
+
+                    selection.clipX = document->GetGeometry().maxBounds[0] + 0.1f;
+                    selection.clipY = document->GetGeometry().maxBounds[1] + 0.1f;
+                    selection.clipZ = document->GetGeometry().maxBounds[2] + 0.1f;
                 }
+
+                selection.explodeFactor = 0.0f;
+                selection.updateGeometry = true;
+                memset(selection.globalSearchBuf, 0, sizeof(selection.globalSearchBuf));
+                memset(selection.localSearchBuf, 0, sizeof(selection.localSearchBuf));
+
                 selection.originalProperties.clear();
                 selection.deletedProperties.clear();
                 selection.deletedObjects.clear();
@@ -177,13 +195,61 @@ namespace BimCore {
         }
 
         ImGui::Separator();
-        ImGui::SliderFloat("Explode", &selection.explodeFactor, 0.0f, configMaxExplode);
-        if (ImGui::IsItemActive()) selection.updateGeometry = true;
 
-        if (ImGui::CollapsingHeader("Clipping Planes")) {
-            ImGui::Checkbox("X", &selection.showPlaneX); ImGui::SameLine(); ImGui::SliderFloat("##x", &selection.clipX, -100.0f, 100.0f);
-            ImGui::Checkbox("Y", &selection.showPlaneY); ImGui::SameLine(); ImGui::SliderFloat("##y", &selection.clipY, -100.0f, 100.0f);
-            ImGui::Checkbox("Z", &selection.showPlaneZ); ImGui::SameLine(); ImGui::SliderFloat("##z", &selection.clipZ, -100.0f, 100.0f);
+        // --- EXPLODE SLIDER ---
+        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.25f, 0.30f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.30f, 0.35f, 0.40f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.35f, 0.40f, 0.45f, 1.0f));
+        bool isExplodeOpen = ImGui::CollapsingHeader("Explode");
+        ImGui::PopStyleColor(3);
+
+        if (isExplodeOpen) {
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::SliderFloat("##explode", &selection.explodeFactor, 0.0f, configMaxExplode, "%.2fx");
+            if (ImGui::IsItemActive()) selection.updateGeometry = true;
+        }
+
+        // --- CLIPPING PLANES ---
+        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.25f, 0.30f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.30f, 0.35f, 0.40f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.35f, 0.40f, 0.45f, 1.0f));
+        bool isClippingOpen = ImGui::CollapsingHeader("Clipping Planes");
+        ImGui::PopStyleColor(3);
+
+        if (isClippingOpen) {
+            float bMinX = -100.0f, bMaxX = 100.0f;
+            float bMinY = -100.0f, bMaxY = 100.0f;
+            float bMinZ = -100.0f, bMaxZ = 100.0f;
+
+            if (document) {
+                bMinX = document->GetGeometry().minBounds[0] - 0.1f; bMaxX = document->GetGeometry().maxBounds[0] + 0.1f;
+                bMinY = document->GetGeometry().minBounds[1] - 0.1f; bMaxY = document->GetGeometry().maxBounds[1] + 0.1f;
+                bMinZ = document->GetGeometry().minBounds[2] - 0.1f; bMaxZ = document->GetGeometry().maxBounds[2] + 0.1f;
+            }
+
+            auto drawClipRow = [](const char* axis, bool& show, float& val, float minB, float maxB, float* col) {
+                ImGui::PushID(axis);
+
+                ImGui::Checkbox("##show", &show);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Glass Plane Visibility");
+                ImGui::SameLine();
+
+                float colorBtnW = ImGui::GetFrameHeight();
+                float spacing = ImGui::GetStyle().ItemSpacing.x;
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - colorBtnW - spacing);
+
+                std::string format = std::string(axis) + ": %.2f";
+                ImGui::SliderFloat("##val", &val, minB, maxB, format.c_str());
+
+                ImGui::SameLine();
+                ImGui::ColorEdit3("##col", col, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
+
+                ImGui::PopID();
+            };
+
+            drawClipRow("X", selection.showPlaneX, selection.clipX, bMinX, bMaxX, selection.planeColorX);
+            drawClipRow("Y", selection.showPlaneY, selection.clipY, bMinY, bMaxY, selection.planeColorY);
+            drawClipRow("Z", selection.showPlaneZ, selection.clipZ, bMinZ, bMaxZ, selection.planeColorZ);
         }
         ImGui::Separator();
 
@@ -281,29 +347,41 @@ namespace BimCore {
                     searchMeshIndices.reserve(selection.searchResults.size());
                     for (auto& r : selection.searchResults) searchMeshIndices.push_back(r.subMeshIndex);
 
-                    ImGuiListClipper clipper;
-                    clipper.Begin(static_cast<int>(selection.searchResults.size()));
-                    while (clipper.Step()) {
-                        for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
-                            const auto& res = selection.searchResults[i];
-                            const auto& sub = subMeshes[res.subMeshIndex];
+                    if (ImGui::BeginTable("##search_table", 1, ImGuiTableFlags_SizingFixedFit)) {
+                        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
 
-                            if (selection.cachedNames.find(sub.guid) == selection.cachedNames.end()) {
-                                auto props = document->GetElementProperties(sub.guid);
-                                selection.cachedNames[sub.guid] = (props.count("Name") && !props["Name"].value.empty()) ? props["Name"].value : sub.type;
+                        ImGuiListClipper clipper;
+                        clipper.Begin(static_cast<int>(selection.searchResults.size()));
+                        while (clipper.Step()) {
+                            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
+                                ImGui::TableNextRow();
+                                ImGui::TableSetColumnIndex(0);
+
+                                const auto& res = selection.searchResults[i];
+                                const auto& sub = subMeshes[res.subMeshIndex];
+
+                                if (selection.cachedNames.find(sub.guid) == selection.cachedNames.end()) {
+                                    auto props = document->GetElementProperties(sub.guid);
+                                    selection.cachedNames[sub.guid] = (props.count("Name") && !props["Name"].value.empty()) ? props["Name"].value : sub.type;
+                                }
+
+                                std::string shortGuid = sub.guid.length() >= 8 ? sub.guid.substr(sub.guid.length() - 8) : sub.guid;
+                                std::string snippet = res.matchType == "Property" ? (res.matchKey + ": " + res.matchValue) : res.matchValue;
+                                std::string label = selection.cachedNames[sub.guid] + " [" + shortGuid + "] - " + snippet + "###" + sub.guid;
+
+                                bool isSelected = std::any_of(selection.objects.begin(), selection.objects.end(), [&](const SelectedObject& o) { return o.guid == sub.guid; });
+
+                                ImVec4 hoverColor = isSelected ? ImGui::GetStyleColorVec4(ImGuiCol_Header) : ImVec4(0,0,0,0);
+                                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, hoverColor);
+                                if (ImGui::Selectable(label.c_str(), isSelected)) {
+                                    handleShiftSelection(i, res.subMeshIndex, "SEARCH_RES", searchMeshIndices, subMeshes);
+                                }
+                                ImGui::PopStyleColor();
+
+                                if (isSelected && triggerFocus) ImGui::SetScrollHereY(0.5f);
                             }
-
-                            std::string shortGuid = sub.guid.length() >= 8 ? sub.guid.substr(sub.guid.length() - 8) : sub.guid;
-                            std::string snippet = res.matchType == "Property" ? (res.matchKey + ": " + res.matchValue) : res.matchValue;
-                            std::string label = selection.cachedNames[sub.guid] + " [" + shortGuid + "] - " + snippet + "###" + sub.guid;
-
-                            bool isSelected = std::any_of(selection.objects.begin(), selection.objects.end(), [&](const SelectedObject& o) { return o.guid == sub.guid; });
-
-                            if (ImGui::Selectable(label.c_str(), isSelected)) {
-                                handleShiftSelection(i, res.subMeshIndex, "SEARCH_RES", searchMeshIndices, subMeshes);
-                            }
-                            if (isSelected && triggerFocus) ImGui::SetScrollHereY(0.5f);
                         }
+                        ImGui::EndTable();
                     }
                 }
             } else {
@@ -327,67 +405,88 @@ namespace BimCore {
 
                     if (groupHasSelected) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
 
-                    // --- ACCENT COLOR: Main Model Tree Headers ---
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.75f, 1.0f, 1.0f)); // Light Blue
-                    bool isNodeOpen = ImGui::TreeNodeEx(type.c_str(), 0, "%s (%zu)%s", type.c_str(), indices.size(), extraTags.c_str());
-                    ImGui::PopStyleColor();
+                    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.15f, 0.3f, 0.45f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.2f, 0.35f, 0.5f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.4f, 0.55f, 1.0f));
+                    bool isNodeOpen = ImGui::TreeNodeEx(type.c_str(), ImGuiTreeNodeFlags_Framed, "%s (%zu)%s", type.c_str(), indices.size(), extraTags.c_str());
+                    ImGui::PopStyleColor(3);
 
                     if (isNodeOpen) {
-                        ImGuiListClipper clipper;
-                        clipper.Begin(static_cast<int>(indices.size()));
-                        while (clipper.Step()) {
-                            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
-                                const auto& sub = subMeshes[indices[i]];
+                        if (ImGui::BeginTable(("##table_" + type).c_str(), 2, ImGuiTableFlags_SizingFixedFit)) {
+                            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+                            ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 25.0f);
 
-                                if (selection.cachedNames.find(sub.guid) == selection.cachedNames.end()) {
-                                    auto props = document->GetElementProperties(sub.guid);
-                                    selection.cachedNames[sub.guid] = (props.count("Name") && !props["Name"].value.empty()) ? props["Name"].value : sub.type;
-                                }
+                            ImGuiListClipper clipper;
+                            clipper.Begin(static_cast<int>(indices.size()));
+                            while (clipper.Step()) {
+                                for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
+                                    const auto& sub = subMeshes[indices[i]];
 
-                                bool isHidden = selection.hiddenObjects.count(sub.guid) > 0;
-                                bool isDeleted = selection.deletedObjects.count(sub.guid) > 0;
-                                bool isEdited = document->HasModifiedProperties(sub.guid);
+                                    ImGui::TableNextRow();
+                                    ImGui::TableSetColumnIndex(0);
 
-                                std::string status = "";
-                                if (isEdited && !isDeleted) status = " (Edited)";
-
-                                std::string shortGuid = sub.guid.length() >= 8 ? sub.guid.substr(sub.guid.length() - 8) : sub.guid;
-                                std::string label = selection.cachedNames[sub.guid] + " [" + shortGuid + "]" + status + "###" + sub.guid;
-
-                                bool isSelected = std::any_of(selection.objects.begin(), selection.objects.end(), [&](const SelectedObject& o) { return o.guid == sub.guid; });
-
-                                if (isDeleted) {
-                                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-                                } else if (isHidden) {
-                                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-                                }
-
-                                if (ImGui::Selectable(label.c_str(), isSelected) && !isDeleted) {
-                                    handleShiftSelection(i, indices[i], type, indices, subMeshes);
-                                }
-
-                                if (isSelected && triggerFocus) ImGui::SetScrollHereY(0.5f);
-                                if (isDeleted || isHidden) ImGui::PopStyleColor();
-
-                                if (isDeleted) {
-                                    ImVec2 min = ImGui::GetItemRectMin();
-                                    ImVec2 max = ImGui::GetItemRectMax();
-                                    float midY = (min.y + max.y) * 0.5f;
-                                    ImGui::GetWindowDrawList()->AddLine(ImVec2(min.x, midY), ImVec2(max.x, midY), IM_COL32(200, 50, 50, 255), 1.5f);
-                                }
-
-                                if (isDeleted) {
-                                    ImGui::SameLine();
-                                    ImGui::PushID((sub.guid + "_undo").c_str());
-                                    if (ImGui::Button(ICON_FA_UNDO)) {
-                                        selection.deletedObjects.erase(sub.guid);
-                                        selection.hiddenObjects.erase(sub.guid);
-                                        selection.hiddenStateChanged = true;
+                                    if (selection.cachedNames.find(sub.guid) == selection.cachedNames.end()) {
+                                        auto props = document->GetElementProperties(sub.guid);
+                                        selection.cachedNames[sub.guid] = (props.count("Name") && !props["Name"].value.empty()) ? props["Name"].value : sub.type;
                                     }
-                                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Undo delete");
-                                    ImGui::PopID();
+
+                                    bool isHidden = selection.hiddenObjects.count(sub.guid) > 0;
+                                    bool isDeleted = selection.deletedObjects.count(sub.guid) > 0;
+                                    bool isEdited = document->HasModifiedProperties(sub.guid);
+
+                                    std::string status = "";
+                                    if (isEdited && !isDeleted) status = " (Edited)";
+
+                                    std::string shortGuid = sub.guid.length() >= 8 ? sub.guid.substr(sub.guid.length() - 8) : sub.guid;
+                                    std::string label = selection.cachedNames[sub.guid] + " [" + shortGuid + "]" + status + "###" + sub.guid;
+
+                                    bool isSelected = std::any_of(selection.objects.begin(), selection.objects.end(), [&](const SelectedObject& o) { return o.guid == sub.guid; });
+
+                                    if (isDeleted) {
+                                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+                                    } else if (isHidden) {
+                                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                                    }
+
+                                    ImVec4 hoverColor = isSelected ? ImGui::GetStyleColorVec4(ImGuiCol_Header) : ImVec4(0,0,0,0);
+                                    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, hoverColor);
+                                    if (ImGui::Selectable(label.c_str(), isSelected) && !isDeleted) {
+                                        handleShiftSelection(i, indices[i], type, indices, subMeshes);
+                                    }
+                                    ImGui::PopStyleColor();
+
+                                    if (isSelected && triggerFocus) ImGui::SetScrollHereY(0.5f);
+                                    if (isDeleted || isHidden) ImGui::PopStyleColor();
+
+                                    if (isDeleted) {
+                                        ImVec2 min = ImGui::GetItemRectMin();
+                                        ImVec2 max = ImGui::GetItemRectMax();
+                                        float midY = (min.y + max.y) * 0.5f;
+                                        ImGui::GetWindowDrawList()->AddLine(ImVec2(min.x, midY), ImVec2(max.x, midY), IM_COL32(200, 50, 50, 255), 1.5f);
+                                    }
+
+                                    ImGui::TableSetColumnIndex(1);
+                                    if (isDeleted) {
+                                        ImGui::PushID((sub.guid + "_undo").c_str());
+                                        if (ImGui::Button(ICON_FA_UNDO, sqBtn)) {
+                                            selection.deletedObjects.erase(sub.guid);
+                                            selection.hiddenObjects.erase(sub.guid);
+                                            selection.hiddenStateChanged = true;
+                                        }
+                                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Undo delete");
+                                        ImGui::PopID();
+                                    } else if (isHidden) {
+                                        ImGui::PushID((sub.guid + "_show").c_str());
+                                        if (ImGui::Button(ICON_FA_EYE, sqBtn)) {
+                                            selection.hiddenObjects.erase(sub.guid);
+                                            selection.hiddenStateChanged = true;
+                                        }
+                                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show element");
+                                        ImGui::PopID();
+                                    }
                                 }
                             }
+                            ImGui::EndTable();
                         }
                         ImGui::TreePop();
                     }
@@ -434,12 +533,12 @@ namespace BimCore {
         if (selection.objects.empty()) {
             ImGui::TextDisabled("Select an element to view properties.");
         } else {
-            
+
             // --- TOP ROW: Search & Export ---
             float exportBtnWidth = 110.0f;
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - exportBtnWidth - ImGui::GetStyle().ItemSpacing.x);
             ImGui::InputTextWithHint("##locSearch", ICON_FA_SEARCH " Filter Properties...", selection.localSearchBuf, sizeof(selection.localSearchBuf));
-            
+
             ImGui::SameLine();
             if (ImGui::Button(ICON_FA_DOWNLOAD " Export CSV", ImVec2(exportBtnWidth, 0))) {
                 auto fd = pfd::save_file("Export Selection", "Selection_Properties.csv", { "CSV Files", "*.csv" });
@@ -459,16 +558,16 @@ namespace BimCore {
 
             bool deleteAll = false;
 
-            // --- GLOBAL ACTIONS ROW (Only visible when >1 selected) ---
+            // --- GLOBAL ACTIONS ROW ---
             if (selection.objects.size() > 1) {
                 if (ImGui::Button("Focus All")) { triggerFocus = true; }
                 ImGui::SameLine();
-                
+
                 bool anyVisible = false;
                 for (const auto& obj : selection.objects) {
                     if (selection.hiddenObjects.count(obj.guid) == 0) { anyVisible = true; break; }
                 }
-                
+
                 if (ImGui::Button(anyVisible ? "Hide All" : "Show All")) {
                     for (const auto& obj : selection.objects) {
                         if (anyVisible) selection.hiddenObjects.insert(obj.guid);
@@ -477,7 +576,7 @@ namespace BimCore {
                     selection.hiddenStateChanged = true;
                 }
                 ImGui::SameLine();
-                
+
                 if (ImGui::Button("Delete All")) { deleteAll = true; }
 
                 ImGui::Separator();
@@ -497,17 +596,17 @@ namespace BimCore {
 
                 // --- SHARED PROPERTIES TREE ---
                 if (selection.objects.size() > 1) {
-                    // --- ACCENT COLOR: Shared Properties Header ---
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.4f, 1.0f)); // Subtle Gold
-                    bool isSharedOpen = ImGui::TreeNodeEx("Shared Properties", ImGuiTreeNodeFlags_DefaultOpen);
-                    ImGui::PopStyleColor();
+                    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.4f, 0.3f, 0.1f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.45f, 0.35f, 0.15f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.5f, 0.4f, 0.2f, 1.0f));
+                    bool isSharedOpen = ImGui::TreeNodeEx("Shared Properties", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed);
+                    ImGui::PopStyleColor(3);
 
                     if (isSharedOpen) {
                         std::vector<std::string> sharedKeys;
                         std::map<std::string, std::string> sharedVals;
                         std::map<std::string, bool> isMulti;
 
-                        // Calculate the intersection of all property keys
                         bool first = true;
                         for (const auto& obj : selection.objects) {
                             if (first) {
@@ -549,15 +648,15 @@ namespace BimCore {
                                     ImGui::PushID(("Shared_" + key).c_str());
                                     if (selection.activeEditGuid == "SHARED" && selection.activeEditKey == key) {
                                         if (selection.focusEditField) { ImGui::SetKeyboardFocusHere(); selection.focusEditField = false; }
-                                        
+
                                         bool enterPressed = ImGui::InputText("##edit", selection.editBuffer, sizeof(selection.editBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
-                                        
+
                                         ImGui::TableSetColumnIndex(2);
-                                        bool confirmPressed = ImGui::Button(ICON_FA_CHECK);
+                                        bool confirmPressed = ImGui::Button(ICON_FA_CHECK, sqBtn);
                                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Apply to all selected");
-                                        
+
                                         ImGui::SameLine();
-                                        if (ImGui::Button(ICON_FA_BAN)) { selection.activeEditGuid = ""; }
+                                        if (ImGui::Button(ICON_FA_BAN, sqBtn)) { selection.activeEditGuid = ""; }
                                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cancel");
 
                                         if (enterPressed || confirmPressed) {
@@ -575,14 +674,14 @@ namespace BimCore {
                                         else ImGui::TextWrapped("%s", sharedVals[key].c_str());
 
                                         ImGui::TableSetColumnIndex(2);
-                                        if (ImGui::Button(ICON_FA_EDIT)) {
+                                        if (ImGui::Button(ICON_FA_EDIT, sqBtn)) {
                                             selection.activeEditGuid = "SHARED";
                                             selection.activeEditKey = key;
                                             strncpy(selection.editBuffer, isMulti[key] ? "" : sharedVals[key].c_str(), sizeof(selection.editBuffer));
                                             selection.focusEditField = true;
                                         }
                                         ImGui::SameLine();
-                                        if (ImGui::Button(ICON_FA_TRASH)) {
+                                        if (ImGui::Button(ICON_FA_TRASH, sqBtn)) {
                                             for (auto& obj : selection.objects) {
                                                 if (selection.originalProperties[obj.guid].find(key) == selection.originalProperties[obj.guid].end()) {
                                                     selection.originalProperties[obj.guid][key] = obj.properties[key].value;
@@ -603,7 +702,6 @@ namespace BimCore {
                     ImGui::Separator();
                 }
 
-                // If a shared property was changed, refresh all objects so the individual tables instantly match
                 if (globalRefreshNeeded) {
                     for (auto& obj : selection.objects) {
                         obj.properties = document->GetElementProperties(obj.guid);
@@ -623,11 +721,12 @@ namespace BimCore {
                     if (selection.cachedNames.count(obj.guid)) headerName = selection.cachedNames[obj.guid];
 
                     std::string treeId = obj.guid + "_tree";
-                    
-                    // --- ACCENT COLOR: Individual Property Headers ---
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.75f, 1.0f, 1.0f)); // Light Blue
-                    bool isObjOpen = ImGui::TreeNodeEx(treeId.c_str(), nodeFlags, "%s [%s]", headerName.c_str(), shortGuid.c_str());
-                    ImGui::PopStyleColor();
+
+                    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.15f, 0.3f, 0.45f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.2f, 0.35f, 0.5f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.4f, 0.55f, 1.0f));
+                    bool isObjOpen = ImGui::TreeNodeEx(treeId.c_str(), nodeFlags | ImGuiTreeNodeFlags_Framed, "%s [%s]", headerName.c_str(), shortGuid.c_str());
+                    ImGui::PopStyleColor(3);
 
                     if (isObjOpen) {
                         bool objNeedsRefresh = false;
@@ -685,7 +784,7 @@ namespace BimCore {
                                     }
 
                                     ImGui::TableSetColumnIndex(2);
-                                    if (ImGui::Button(ICON_FA_CHECK)) {
+                                    if (ImGui::Button(ICON_FA_CHECK, sqBtn)) {
                                         if (selection.originalProperties[obj.guid].find(key) == selection.originalProperties[obj.guid].end()) {
                                             selection.originalProperties[obj.guid][key] = obj.properties[key].value;
                                         }
@@ -695,7 +794,7 @@ namespace BimCore {
                                     }
                                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Confirm change");
                                     ImGui::SameLine();
-                                    if (ImGui::Button(ICON_FA_BAN)) { selection.activeEditGuid = ""; }
+                                    if (ImGui::Button(ICON_FA_BAN, sqBtn)) { selection.activeEditGuid = ""; }
                                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cancel change");
 
                                 } else {
@@ -704,7 +803,7 @@ namespace BimCore {
 
                                     ImGui::TableSetColumnIndex(2);
                                     if (isPropEdited || isPropDeleted) {
-                                        if (ImGui::Button(ICON_FA_UNDO)) {
+                                        if (ImGui::Button(ICON_FA_UNDO, sqBtn)) {
                                             std::string orig = selection.originalProperties[obj.guid][key];
                                             document->UpdateElementProperty(obj.guid, key, orig);
                                             selection.deletedProperties[obj.guid].erase(key);
@@ -717,7 +816,7 @@ namespace BimCore {
 
                                     if (!isPropDeleted) {
                                         if (!isPropEdited) {
-                                            if (ImGui::Button(ICON_FA_EDIT)) {
+                                            if (ImGui::Button(ICON_FA_EDIT, sqBtn)) {
                                                 selection.activeEditGuid = obj.guid;
                                                 selection.activeEditKey = key;
                                                 strncpy(selection.editBuffer, obj.properties[key].value.c_str(), sizeof(selection.editBuffer));
@@ -725,7 +824,7 @@ namespace BimCore {
                                             }
                                             ImGui::SameLine();
                                         }
-                                        if (ImGui::Button(ICON_FA_TRASH)) { propToDelete = key; }
+                                        if (ImGui::Button(ICON_FA_TRASH, sqBtn)) { propToDelete = key; }
                                     }
                                 }
                                 ImGui::PopID();
@@ -774,6 +873,54 @@ namespace BimCore {
             selection.objects.clear();
         }
 
+        // =====================================================================
+        // RIGHT CLICK CONTEXT MENU (With Drag Cancellation)
+        // =====================================================================
+        bool isHoveringUI = ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow) || ImGui::IsAnyItemHovered();
+
+        // Use ImGui::GetIO() to check how far the mouse actually traveled during the click
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Right) &&
+            (ImGui::GetIO().MouseDragMaxDistanceSqr[ImGuiMouseButton_Right] < 25.0f) &&
+            !isHoveringUI)
+        {
+            ImGui::OpenPopup("##3DContextMenu");
+        }
+
+        if (ImGui::BeginPopup("##3DContextMenu")) {
+            if (!selection.objects.empty()) {
+                ImGui::TextDisabled("%zu Elements Selected", selection.objects.size());
+                ImGui::Separator();
+
+                if (ImGui::MenuItem(ICON_FA_MOUSE_POINTER "  Focus Selection")) { triggerFocus = true; }
+
+                bool anyVisible = false;
+                for (const auto& obj : selection.objects) {
+                    if (selection.hiddenObjects.count(obj.guid) == 0) { anyVisible = true; break; }
+                }
+
+                if (ImGui::MenuItem(anyVisible ? ICON_FA_EYE "  Hide Selection" : ICON_FA_EYE "  Show Selection")) {
+                    for (const auto& obj : selection.objects) {
+                        if (anyVisible) selection.hiddenObjects.insert(obj.guid);
+                        else selection.hiddenObjects.erase(obj.guid);
+                    }
+                    selection.hiddenStateChanged = true;
+                }
+
+                if (ImGui::MenuItem(ICON_FA_TRASH "  Delete Selection")) {
+                    for (const auto& obj : selection.objects) {
+                        selection.deletedObjects.insert(obj.guid);
+                        selection.hiddenObjects.insert(obj.guid);
+                    }
+                    selection.objects.clear();
+                    selection.hiddenStateChanged = true;
+                }
+            } else {
+                ImGui::TextDisabled("Select elements to view actions.");
+            }
+            ImGui::EndPopup();
+        }
+
+        ImGui::PopStyleVar(); // Pop ButtonTextAlign
         ImGui::Render();
     }
 } // namespace BimCore

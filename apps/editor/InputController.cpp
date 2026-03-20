@@ -103,7 +103,7 @@ namespace BimCore {
         // Sync zoom speed and process scroll wheel
         camera.SetZoomSpeed(config.ZoomSpeed);
         float scroll = (float)window.ConsumeScrollDelta();
-        
+
         if (!uiHovered && std::abs(scroll) > 0.01f) {
             float zoomMult = window.IsKeyPressed(config.KeySprint) ? config.ZoomSlowMultiplier : 1.0f;
             camera.ProcessZoom(scroll * zoomMult);
@@ -115,9 +115,10 @@ namespace BimCore {
                 bool leftClickOrbit = (selection.activeTool == InteractionTool::Orbit) && window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
                 bool mmbPan   = window.IsMouseButtonPressed(config.CadPanButton) && !window.IsKeyPressed(config.CadOrbitModifier);
                 bool mmbOrbit = window.IsMouseButtonPressed(config.CadPanButton) && window.IsKeyPressed(config.CadOrbitModifier);
+                bool rmbOrbit = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT);
 
                 if (leftClickPan || mmbPan) camera.ProcessPan(deltaX, -deltaY);
-                else if (leftClickOrbit || mmbOrbit) camera.ProcessOrbit(deltaX, -deltaY);
+                else if (leftClickOrbit || mmbOrbit || rmbOrbit) camera.ProcessOrbit(deltaX, -deltaY);
             }
 
             if (selection.activeTool == InteractionTool::Select && !uiHovered) {
@@ -125,7 +126,6 @@ namespace BimCore {
             }
 
         } else {
-            // FLIGHT MODE: INVERTED VERTICAL AXIS for Mouse Look
             camera.ProcessMouseMovement(deltaX, -deltaY);
         }
     }
@@ -137,7 +137,12 @@ namespace BimCore {
             window.GetMousePosition(mx, my);
             Ray ray = ScreenToWorldRay(mx, my, window.GetWidth(), window.GetHeight(), camera.GetViewMatrix(), camera.GetProjectionMatrix(), camera.GetPosition());
 
-            HitResult hit = Raycaster::CastRay(ray, document->GetGeometry(), kFloatMax, kFloatMax, kFloatMax, selection.hiddenObjects);
+            // --- FIXED: Pass the active clipping planes so the raycaster ignores sliced geometry! ---
+            float cx = selection.showPlaneX ? selection.clipX : kFloatMax;
+            float cy = selection.showPlaneY ? selection.clipY : kFloatMax;
+            float cz = selection.showPlaneZ ? selection.clipZ : kFloatMax;
+
+            HitResult hit = Raycaster::CastRay(ray, document->GetGeometry(), cx, cy, cz, selection.hiddenObjects);
 
             if (hit.hit) {
                 bool isCtrlPressed = window.IsKeyPressed(config.KeyMultiSelect);

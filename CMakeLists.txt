@@ -151,33 +151,44 @@ endif()
 # ==============================================================================
 set(DIST_DIR "${CMAKE_SOURCE_DIR}/dist")
 
-# Dynamically find where WebGPU hid its DLL
-file(GLOB_RECURSE WGPU_DLL "${CMAKE_BINARY_DIR}/_deps/*/wgpu_native.dll")
-
 add_custom_command(TARGET BIMCoreEditor POST_BUILD
     # Create the pristine folder
     COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}"
-    
+
     # Copy the application and assets
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:BIMCoreEditor>" "${DIST_DIR}/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/fa-solid-900.ttf" "${DIST_DIR}/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/apps/editor/settings.ini" "${DIST_DIR}/"
-    
-    # Copy the missing WebGPU DLL
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${WGPU_DLL} "${DIST_DIR}/"
-    
+
     COMMENT "Publishing pristine build to /dist folder..."
 )
 
-# Copy ONLY the heavy SDK DLLs we actually need (No Python/Conda bloat!)
+# OS-Specific WebGPU Native Library Name
 if(WIN32)
-    # The surgical strike: Only grab IfcOpenShell, OpenCASCADE, and GLFW dlls
-    file(GLOB RUNTIME_DLLS 
-        "${BIMCORE_SDK_BIN_DIR}/Ifc*.dll" 
-        "${BIMCORE_SDK_BIN_DIR}/TK*.dll" 
+    set(WGPU_NAME "wgpu_native.dll")
+elseif(APPLE)
+    set(WGPU_NAME "libwgpu_native.dylib")
+else()
+    set(WGPU_NAME "libwgpu_native.so")
+endif()
+
+# Safely copy WebGPU if found
+file(GLOB_RECURSE WGPU_LIB "${CMAKE_BINARY_DIR}/_deps/*/${WGPU_NAME}")
+if(WGPU_LIB)
+    add_custom_command(TARGET BIMCoreEditor POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${WGPU_LIB} "${DIST_DIR}/"
+    )
+endif()
+
+# Copy ONLY the heavy SDK DLLs we actually need (Windows Only)
+# Linux manages shared objects via RPATH, so we don't need to bloat the dist folder here.
+if(WIN32)
+    file(GLOB RUNTIME_DLLS
+        "${BIMCORE_SDK_BIN_DIR}/Ifc*.dll"
+        "${BIMCORE_SDK_BIN_DIR}/TK*.dll"
         "${BIMCORE_SDK_BIN_DIR}/glfw*.dll"
     )
-    
+
     if(RUNTIME_DLLS)
         add_custom_command(TARGET BIMCoreEditor POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RUNTIME_DLLS} "${DIST_DIR}/"

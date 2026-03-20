@@ -769,9 +769,9 @@ wgpuPipelineLayoutRelease(layout);
         wgpuQueueWriteBuffer(m_queue, m_aabbVertexBuffer, 0, v, sizeof(v));
     }
 
-    void GraphicsContext::SetClippingPlanes(bool activeX, float x,
-                                            bool activeY, float y,
-                                            bool activeZ, float z,
+    void GraphicsContext::SetClippingPlanes(bool activeX, float x, const float* colX,
+                                            bool activeY, float y, const float* colY,
+                                            bool activeZ, float z, const float* colZ,
                                             const glm::vec3& minB,
                                             const glm::vec3& maxB)
     {
@@ -789,7 +789,6 @@ wgpuPipelineLayoutRelease(layout);
         {
             uint32_t i = static_cast<uint32_t>(verts.size());
             // Build a quad depending on which axis the plane is normal to
-            // (reusing the same push pattern the original used)
             Vertex v = {}; v.normal[0]=nx; v.normal[1]=ny; v.normal[2]=nz;
             v.color[0]=cr; v.color[1]=cg; v.color[2]=cb;
             if (nx != 0.0f) {
@@ -811,9 +810,9 @@ wgpuPipelineLayoutRelease(layout);
             inds.insert(inds.end(), {i, i+1, i+2, i, i+2, i+3});
         };
 
-        if (activeX) addPlane(x+0.001f, 0,       0,       1,0,0, 1.0f, 0.2f, 0.2f);
-        if (activeY) addPlane(0,       y+0.001f, 0,       0,1,0, 0.2f, 1.0f, 0.2f);
-        if (activeZ) addPlane(0,       0,       z+0.001f, 0,0,1, 0.2f, 0.5f, 1.0f);
+        if (activeX) addPlane(x+0.001f, 0,       0,       1,0,0, colX[0], colX[1], colX[2]);
+        if (activeY) addPlane(0,       y+0.001f, 0,       0,1,0, colY[0], colY[1], colY[2]);
+        if (activeZ) addPlane(0,       0,       z+0.001f, 0,0,1, colZ[0], colZ[1], colZ[2]);
 
         m_glassIndexCount = static_cast<uint32_t>(inds.size());
         if (m_glassIndexCount > 0) {
