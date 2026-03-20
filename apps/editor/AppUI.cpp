@@ -64,7 +64,7 @@ namespace BimCore {
                 ImGuiWindowFlags_NoMove);
                 
             ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), ICON_FA_ARROWS_ALT "  FLY MODE ACTIVE");
-            ImGui::Text("Press TAB to unlock cursor");
+            ImGui::Text("Press F1 to unlock cursor");
             ImGui::End();
         }
 
@@ -327,8 +327,12 @@ namespace BimCore {
 
                     if (groupHasSelected) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
 
-                    if (ImGui::TreeNodeEx(type.c_str(), 0, "%s (%zu)%s", type.c_str(), indices.size(), extraTags.c_str())) {
+                    // --- ACCENT COLOR: Main Model Tree Headers ---
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.75f, 1.0f, 1.0f)); // Light Blue
+                    bool isNodeOpen = ImGui::TreeNodeEx(type.c_str(), 0, "%s (%zu)%s", type.c_str(), indices.size(), extraTags.c_str());
+                    ImGui::PopStyleColor();
 
+                    if (isNodeOpen) {
                         ImGuiListClipper clipper;
                         clipper.Begin(static_cast<int>(indices.size()));
                         while (clipper.Step()) {
@@ -430,158 +434,338 @@ namespace BimCore {
         if (selection.objects.empty()) {
             ImGui::TextDisabled("Select an element to view properties.");
         } else {
+            
+            // --- TOP ROW: Search & Export ---
+            float exportBtnWidth = 110.0f;
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - exportBtnWidth - ImGui::GetStyle().ItemSpacing.x);
             ImGui::InputTextWithHint("##locSearch", ICON_FA_SEARCH " Filter Properties...", selection.localSearchBuf, sizeof(selection.localSearchBuf));
+            
+            ImGui::SameLine();
+            if (ImGui::Button(ICON_FA_DOWNLOAD " Export CSV", ImVec2(exportBtnWidth, 0))) {
+                auto fd = pfd::save_file("Export Selection", "Selection_Properties.csv", { "CSV Files", "*.csv" });
+                std::string path = fd.result();
+                if (!path.empty()) {
+                    std::ofstream out(path);
+                    out << "GUID,Type,Property,Value\n";
+                    for (const auto& obj : selection.objects) {
+                        for (const auto& [k, v] : obj.properties) {
+                            out << obj.guid << "," << obj.type << ",\"" << k << "\",\"" << v.value << "\"\n";
+                        }
+                    }
+                }
+            }
             std::string locFilter = selection.localSearchBuf;
             ImGui::Separator();
 
-            std::string objToDeleteEntirely = "";
-            std::string objToDeselect = "";
+            bool deleteAll = false;
 
-            ImGuiTreeNodeFlags nodeFlags = (selection.objects.size() == 1 || !locFilter.empty()) ? ImGuiTreeNodeFlags_DefaultOpen : 0;
-
-            for (auto& obj : selection.objects) {
-                std::string shortGuid = obj.guid.length() >= 8 ? obj.guid.substr(obj.guid.length() - 8) : obj.guid;
-
-                std::string headerName = obj.type;
-                if (selection.cachedNames.count(obj.guid)) headerName = selection.cachedNames[obj.guid];
-
-                std::string treeId = obj.guid + "_tree";
-                if (ImGui::TreeNodeEx(treeId.c_str(), nodeFlags, "%s [%s]", headerName.c_str(), shortGuid.c_str())) {
-                    bool objNeedsRefresh = false;
-                    std::string propToDelete = "";
-
-                    if (ImGui::Button("Focus")) triggerFocus = true;
-                    ImGui::SameLine();
-
-                    bool isHidden = selection.hiddenObjects.count(obj.guid) > 0;
-                    if (ImGui::Button(isHidden ? "Show" : "Hide")) {
-                        if (isHidden) {
-                            selection.hiddenObjects.erase(obj.guid);
-                        } else {
-                            selection.hiddenObjects.insert(obj.guid);
-                            objToDeselect = obj.guid;
-                        }
-                        selection.hiddenStateChanged = true;
+            // --- GLOBAL ACTIONS ROW (Only visible when >1 selected) ---
+            if (selection.objects.size() > 1) {
+                if (ImGui::Button("Focus All")) { triggerFocus = true; }
+                ImGui::SameLine();
+                
+                bool anyVisible = false;
+                for (const auto& obj : selection.objects) {
+                    if (selection.hiddenObjects.count(obj.guid) == 0) { anyVisible = true; break; }
+                }
+                
+                if (ImGui::Button(anyVisible ? "Hide All" : "Show All")) {
+                    for (const auto& obj : selection.objects) {
+                        if (anyVisible) selection.hiddenObjects.insert(obj.guid);
+                        else selection.hiddenObjects.erase(obj.guid);
                     }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Delete Entity")) objToDeleteEntirely = obj.guid;
+                    selection.hiddenStateChanged = true;
+                }
+                ImGui::SameLine();
+                
+                if (ImGui::Button("Delete All")) { deleteAll = true; }
 
-                    if (ImGui::BeginTable("PropTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-                        ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthStretch, 0.4f);
-                        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.4f);
-                        ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 65.0f);
+                ImGui::Separator();
+            }
 
-                        std::vector<std::string> allKeys;
-                        for (auto& [k, v] : obj.properties) allKeys.push_back(k);
-                        for (auto& k : selection.deletedProperties[obj.guid]) {
-                            if (std::find(allKeys.begin(), allKeys.end(), k) == allKeys.end()) allKeys.push_back(k);
+            if (deleteAll) {
+                for (const auto& obj : selection.objects) {
+                    selection.deletedObjects.insert(obj.guid);
+                    selection.hiddenObjects.insert(obj.guid);
+                }
+                selection.objects.clear();
+                selection.hiddenStateChanged = true;
+            } else {
+                std::string objToDeleteEntirely = "";
+                std::string objToDeselect = "";
+                bool globalRefreshNeeded = false;
+
+                // --- SHARED PROPERTIES TREE ---
+                if (selection.objects.size() > 1) {
+                    // --- ACCENT COLOR: Shared Properties Header ---
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.4f, 1.0f)); // Subtle Gold
+                    bool isSharedOpen = ImGui::TreeNodeEx("Shared Properties", ImGuiTreeNodeFlags_DefaultOpen);
+                    ImGui::PopStyleColor();
+
+                    if (isSharedOpen) {
+                        std::vector<std::string> sharedKeys;
+                        std::map<std::string, std::string> sharedVals;
+                        std::map<std::string, bool> isMulti;
+
+                        // Calculate the intersection of all property keys
+                        bool first = true;
+                        for (const auto& obj : selection.objects) {
+                            if (first) {
+                                for (const auto& [k, v] : obj.properties) {
+                                    sharedKeys.push_back(k);
+                                    sharedVals[k] = v.value;
+                                    isMulti[k] = false;
+                                }
+                                first = false;
+                            } else {
+                                for (auto it = sharedKeys.begin(); it != sharedKeys.end(); ) {
+                                    if (obj.properties.find(*it) == obj.properties.end()) {
+                                        it = sharedKeys.erase(it);
+                                    } else {
+                                        if (sharedVals[*it] != obj.properties.at(*it).value) {
+                                            isMulti[*it] = true;
+                                        }
+                                        ++it;
+                                    }
+                                }
+                            }
                         }
 
-                        for (auto& key : allKeys) {
-                            if (!locFilter.empty() && !icontains(key, locFilter) && !icontains(obj.properties[key].value, locFilter)) continue;
+                        if (sharedKeys.empty()) {
+                            ImGui::TextDisabled("No shared properties found.");
+                        } else {
+                            if (ImGui::BeginTable("SharedPropTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+                                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthStretch, 0.4f);
+                                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.4f);
+                                ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 65.0f);
 
-                            bool isPropDeleted = selection.deletedProperties[obj.guid].count(key) > 0;
-                            bool isPropEdited  = !isPropDeleted && selection.originalProperties[obj.guid].count(key) > 0 && selection.originalProperties[obj.guid][key] != obj.properties[key].value;
+                                for (const auto& key : sharedKeys) {
+                                    if (!locFilter.empty() && !icontains(key, locFilter) && !icontains(sharedVals[key], locFilter)) continue;
 
-                            ImGui::TableNextRow();
+                                    ImGui::TableNextRow();
+                                    ImGui::TableSetColumnIndex(0); ImGui::TextWrapped("%s", key.c_str());
+                                    ImGui::TableSetColumnIndex(1);
 
-                            if (isPropDeleted) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-                            ImGui::TableSetColumnIndex(0); ImGui::TextWrapped("%s", key.c_str());
-                            ImGui::TableSetColumnIndex(1);
+                                    ImGui::PushID(("Shared_" + key).c_str());
+                                    if (selection.activeEditGuid == "SHARED" && selection.activeEditKey == key) {
+                                        if (selection.focusEditField) { ImGui::SetKeyboardFocusHere(); selection.focusEditField = false; }
+                                        
+                                        bool enterPressed = ImGui::InputText("##edit", selection.editBuffer, sizeof(selection.editBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
+                                        
+                                        ImGui::TableSetColumnIndex(2);
+                                        bool confirmPressed = ImGui::Button(ICON_FA_CHECK);
+                                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Apply to all selected");
+                                        
+                                        ImGui::SameLine();
+                                        if (ImGui::Button(ICON_FA_BAN)) { selection.activeEditGuid = ""; }
+                                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cancel");
 
-                            ImGui::PushID((obj.guid + key).c_str());
-                            if (selection.activeEditGuid == obj.guid && selection.activeEditKey == key) {
-                                if (selection.focusEditField) { ImGui::SetKeyboardFocusHere(); selection.focusEditField = false; }
-                                if (ImGui::InputText("##edit", selection.editBuffer, sizeof(selection.editBuffer), ImGuiInputTextFlags_EnterReturnsTrue)) {
-                                    if (selection.originalProperties[obj.guid].find(key) == selection.originalProperties[obj.guid].end()) {
-                                        selection.originalProperties[obj.guid][key] = obj.properties[key].value;
-                                    }
-                                    document->UpdateElementProperty(obj.guid, key, selection.editBuffer);
-                                    selection.activeEditGuid = "";
-                                    objNeedsRefresh = true;
-                                }
+                                        if (enterPressed || confirmPressed) {
+                                            for (auto& obj : selection.objects) {
+                                                if (selection.originalProperties[obj.guid].find(key) == selection.originalProperties[obj.guid].end()) {
+                                                    selection.originalProperties[obj.guid][key] = obj.properties[key].value;
+                                                }
+                                                document->UpdateElementProperty(obj.guid, key, selection.editBuffer);
+                                            }
+                                            selection.activeEditGuid = "";
+                                            globalRefreshNeeded = true;
+                                        }
+                                    } else {
+                                        if (isMulti[key]) ImGui::TextDisabled("<Multiple Values>");
+                                        else ImGui::TextWrapped("%s", sharedVals[key].c_str());
 
-                                ImGui::TableSetColumnIndex(2);
-                                if (ImGui::Button(ICON_FA_CHECK)) {
-                                    if (selection.originalProperties[obj.guid].find(key) == selection.originalProperties[obj.guid].end()) {
-                                        selection.originalProperties[obj.guid][key] = obj.properties[key].value;
-                                    }
-                                    document->UpdateElementProperty(obj.guid, key, selection.editBuffer);
-                                    selection.activeEditGuid = "";
-                                    objNeedsRefresh = true;
-                                }
-                                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Confirm change");
-                                ImGui::SameLine();
-                                if (ImGui::Button(ICON_FA_BAN)) { selection.activeEditGuid = ""; }
-                                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cancel change");
-
-                            } else {
-                                if (isPropDeleted) ImGui::TextWrapped("<Deleted>");
-                                else ImGui::TextWrapped("%s", obj.properties[key].value.c_str());
-
-                                ImGui::TableSetColumnIndex(2);
-                                if (isPropEdited || isPropDeleted) {
-                                    if (ImGui::Button(ICON_FA_UNDO)) {
-                                        std::string orig = selection.originalProperties[obj.guid][key];
-                                        document->UpdateElementProperty(obj.guid, key, orig);
-                                        selection.deletedProperties[obj.guid].erase(key);
-                                        selection.originalProperties[obj.guid].erase(key);
-                                        objNeedsRefresh = true;
-                                    }
-                                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Undo edit/delete");
-                                    if (!isPropDeleted) ImGui::SameLine();
-                                }
-
-                                if (!isPropDeleted) {
-                                    if (!isPropEdited) {
+                                        ImGui::TableSetColumnIndex(2);
                                         if (ImGui::Button(ICON_FA_EDIT)) {
-                                            selection.activeEditGuid = obj.guid;
+                                            selection.activeEditGuid = "SHARED";
                                             selection.activeEditKey = key;
-                                            strncpy(selection.editBuffer, obj.properties[key].value.c_str(), sizeof(selection.editBuffer));
+                                            strncpy(selection.editBuffer, isMulti[key] ? "" : sharedVals[key].c_str(), sizeof(selection.editBuffer));
                                             selection.focusEditField = true;
                                         }
                                         ImGui::SameLine();
+                                        if (ImGui::Button(ICON_FA_TRASH)) {
+                                            for (auto& obj : selection.objects) {
+                                                if (selection.originalProperties[obj.guid].find(key) == selection.originalProperties[obj.guid].end()) {
+                                                    selection.originalProperties[obj.guid][key] = obj.properties[key].value;
+                                                }
+                                                selection.deletedProperties[obj.guid].insert(key);
+                                                document->UpdateElementProperty(obj.guid, key, "");
+                                            }
+                                            globalRefreshNeeded = true;
+                                        }
                                     }
-                                    if (ImGui::Button(ICON_FA_TRASH)) { propToDelete = key; }
+                                    ImGui::PopID();
                                 }
+                                ImGui::EndTable();
                             }
-                            ImGui::PopID();
-                            if (isPropDeleted) ImGui::PopStyleColor();
                         }
-                        ImGui::EndTable();
+                        ImGui::TreePop();
                     }
+                    ImGui::Separator();
+                }
 
-                    if (!propToDelete.empty()) {
-                        if (selection.originalProperties[obj.guid].find(propToDelete) == selection.originalProperties[obj.guid].end()) {
-                            selection.originalProperties[obj.guid][propToDelete] = obj.properties[propToDelete].value;
-                        }
-                        selection.deletedProperties[obj.guid].insert(propToDelete);
-                        document->UpdateElementProperty(obj.guid, propToDelete, "");
-                        obj.properties.erase(propToDelete);
-                        objNeedsRefresh = true;
-                    }
-
-                    if (objNeedsRefresh) {
+                // If a shared property was changed, refresh all objects so the individual tables instantly match
+                if (globalRefreshNeeded) {
+                    for (auto& obj : selection.objects) {
                         obj.properties = document->GetElementProperties(obj.guid);
                         if (obj.properties.count("Name") && !obj.properties["Name"].value.empty()) {
                             selection.cachedNames[obj.guid] = obj.properties["Name"].value;
                         }
                     }
-                    ImGui::TreePop();
                 }
-            }
 
-            if (!objToDeselect.empty()) {
-                selection.objects.erase(std::remove_if(selection.objects.begin(), selection.objects.end(),
-                                                       [&](const SelectedObject& o) { return o.guid == objToDeselect; }), selection.objects.end());
-            }
+                // --- INDIVIDUAL OBJECT TREES ---
+                ImGuiTreeNodeFlags nodeFlags = (selection.objects.size() == 1 || !locFilter.empty()) ? ImGuiTreeNodeFlags_DefaultOpen : 0;
 
-            if (!objToDeleteEntirely.empty()) {
-                selection.deletedObjects.insert(objToDeleteEntirely);
-                selection.hiddenObjects.insert(objToDeleteEntirely);
-                selection.objects.erase(std::remove_if(selection.objects.begin(), selection.objects.end(),
-                                                       [&](const SelectedObject& o) { return o.guid == objToDeleteEntirely; }), selection.objects.end());
-                selection.hiddenStateChanged = true;
+                for (auto& obj : selection.objects) {
+                    std::string shortGuid = obj.guid.length() >= 8 ? obj.guid.substr(obj.guid.length() - 8) : obj.guid;
+
+                    std::string headerName = obj.type;
+                    if (selection.cachedNames.count(obj.guid)) headerName = selection.cachedNames[obj.guid];
+
+                    std::string treeId = obj.guid + "_tree";
+                    
+                    // --- ACCENT COLOR: Individual Property Headers ---
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.75f, 1.0f, 1.0f)); // Light Blue
+                    bool isObjOpen = ImGui::TreeNodeEx(treeId.c_str(), nodeFlags, "%s [%s]", headerName.c_str(), shortGuid.c_str());
+                    ImGui::PopStyleColor();
+
+                    if (isObjOpen) {
+                        bool objNeedsRefresh = false;
+                        std::string propToDelete = "";
+
+                        if (ImGui::Button("Focus")) triggerFocus = true;
+                        ImGui::SameLine();
+
+                        bool isHidden = selection.hiddenObjects.count(obj.guid) > 0;
+                        if (ImGui::Button(isHidden ? "Show" : "Hide")) {
+                            if (isHidden) {
+                                selection.hiddenObjects.erase(obj.guid);
+                            } else {
+                                selection.hiddenObjects.insert(obj.guid);
+                                objToDeselect = obj.guid;
+                            }
+                            selection.hiddenStateChanged = true;
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Delete Entity")) objToDeleteEntirely = obj.guid;
+
+                        if (ImGui::BeginTable("PropTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+                            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthStretch, 0.4f);
+                            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.4f);
+                            ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 65.0f);
+
+                            std::vector<std::string> allKeys;
+                            for (auto& [k, v] : obj.properties) allKeys.push_back(k);
+                            for (auto& k : selection.deletedProperties[obj.guid]) {
+                                if (std::find(allKeys.begin(), allKeys.end(), k) == allKeys.end()) allKeys.push_back(k);
+                            }
+
+                            for (auto& key : allKeys) {
+                                if (!locFilter.empty() && !icontains(key, locFilter) && !icontains(obj.properties[key].value, locFilter)) continue;
+
+                                bool isPropDeleted = selection.deletedProperties[obj.guid].count(key) > 0;
+                                bool isPropEdited  = !isPropDeleted && selection.originalProperties[obj.guid].count(key) > 0 && selection.originalProperties[obj.guid][key] != obj.properties[key].value;
+
+                                ImGui::TableNextRow();
+
+                                if (isPropDeleted) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                                ImGui::TableSetColumnIndex(0); ImGui::TextWrapped("%s", key.c_str());
+                                ImGui::TableSetColumnIndex(1);
+
+                                ImGui::PushID((obj.guid + key).c_str());
+                                if (selection.activeEditGuid == obj.guid && selection.activeEditKey == key) {
+                                    if (selection.focusEditField) { ImGui::SetKeyboardFocusHere(); selection.focusEditField = false; }
+                                    if (ImGui::InputText("##edit", selection.editBuffer, sizeof(selection.editBuffer), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                                        if (selection.originalProperties[obj.guid].find(key) == selection.originalProperties[obj.guid].end()) {
+                                            selection.originalProperties[obj.guid][key] = obj.properties[key].value;
+                                        }
+                                        document->UpdateElementProperty(obj.guid, key, selection.editBuffer);
+                                        selection.activeEditGuid = "";
+                                        objNeedsRefresh = true;
+                                    }
+
+                                    ImGui::TableSetColumnIndex(2);
+                                    if (ImGui::Button(ICON_FA_CHECK)) {
+                                        if (selection.originalProperties[obj.guid].find(key) == selection.originalProperties[obj.guid].end()) {
+                                            selection.originalProperties[obj.guid][key] = obj.properties[key].value;
+                                        }
+                                        document->UpdateElementProperty(obj.guid, key, selection.editBuffer);
+                                        selection.activeEditGuid = "";
+                                        objNeedsRefresh = true;
+                                    }
+                                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Confirm change");
+                                    ImGui::SameLine();
+                                    if (ImGui::Button(ICON_FA_BAN)) { selection.activeEditGuid = ""; }
+                                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cancel change");
+
+                                } else {
+                                    if (isPropDeleted) ImGui::TextWrapped("<Deleted>");
+                                    else ImGui::TextWrapped("%s", obj.properties[key].value.c_str());
+
+                                    ImGui::TableSetColumnIndex(2);
+                                    if (isPropEdited || isPropDeleted) {
+                                        if (ImGui::Button(ICON_FA_UNDO)) {
+                                            std::string orig = selection.originalProperties[obj.guid][key];
+                                            document->UpdateElementProperty(obj.guid, key, orig);
+                                            selection.deletedProperties[obj.guid].erase(key);
+                                            selection.originalProperties[obj.guid].erase(key);
+                                            objNeedsRefresh = true;
+                                        }
+                                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Undo edit/delete");
+                                        if (!isPropDeleted) ImGui::SameLine();
+                                    }
+
+                                    if (!isPropDeleted) {
+                                        if (!isPropEdited) {
+                                            if (ImGui::Button(ICON_FA_EDIT)) {
+                                                selection.activeEditGuid = obj.guid;
+                                                selection.activeEditKey = key;
+                                                strncpy(selection.editBuffer, obj.properties[key].value.c_str(), sizeof(selection.editBuffer));
+                                                selection.focusEditField = true;
+                                            }
+                                            ImGui::SameLine();
+                                        }
+                                        if (ImGui::Button(ICON_FA_TRASH)) { propToDelete = key; }
+                                    }
+                                }
+                                ImGui::PopID();
+                                if (isPropDeleted) ImGui::PopStyleColor();
+                            }
+                            ImGui::EndTable();
+                        }
+
+                        if (!propToDelete.empty()) {
+                            if (selection.originalProperties[obj.guid].find(propToDelete) == selection.originalProperties[obj.guid].end()) {
+                                selection.originalProperties[obj.guid][propToDelete] = obj.properties[propToDelete].value;
+                            }
+                            selection.deletedProperties[obj.guid].insert(propToDelete);
+                            document->UpdateElementProperty(obj.guid, propToDelete, "");
+                            obj.properties.erase(propToDelete);
+                            objNeedsRefresh = true;
+                        }
+
+                        if (objNeedsRefresh) {
+                            obj.properties = document->GetElementProperties(obj.guid);
+                            if (obj.properties.count("Name") && !obj.properties["Name"].value.empty()) {
+                                selection.cachedNames[obj.guid] = obj.properties["Name"].value;
+                            }
+                        }
+                        ImGui::TreePop();
+                    }
+                }
+
+                if (!objToDeselect.empty()) {
+                    selection.objects.erase(std::remove_if(selection.objects.begin(), selection.objects.end(),
+                                                           [&](const SelectedObject& o) { return o.guid == objToDeselect; }), selection.objects.end());
+                }
+
+                if (!objToDeleteEntirely.empty()) {
+                    selection.deletedObjects.insert(objToDeleteEntirely);
+                    selection.hiddenObjects.insert(objToDeleteEntirely);
+                    selection.objects.erase(std::remove_if(selection.objects.begin(), selection.objects.end(),
+                                                           [&](const SelectedObject& o) { return o.guid == objToDeleteEntirely; }), selection.objects.end());
+                    selection.hiddenStateChanged = true;
+                }
             }
         }
         ImGui::End();
