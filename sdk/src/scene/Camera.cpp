@@ -52,9 +52,6 @@ namespace BimCore {
 
     void Camera::ProcessPan(float deltaX, float deltaY) {
         // --- NEW: True CAD Panning Math ---
-        // Dynamically scale pan speed using Trigonometry based on distance and FOV.
-        // This ensures moving the mouse 100 pixels feels exactly the same whether
-        // you are looking at a screw or a 50-meter exploded building!
         float panSpeed = (m_orbitDistance * std::tan(m_fov / 2.0f) * 2.0f) / 1080.0f;
         panSpeed = std::max(0.005f, panSpeed); // Ensure it never completely stops
 
@@ -79,8 +76,9 @@ namespace BimCore {
     }
 
     void Camera::ProcessZoom(float zoomDelta) {
-        // --- FIX: Cut zoom speed down to a 10th ---
-        float dynamicZoomSpeed = std::max(0.01f, m_orbitDistance * 0.01f) * m_zoomSpeed;
+        // --- FIX: Restored full zoom speed so it flies! ---
+        // A minimal buffer of 0.5f ensures it never permanently halts
+        float dynamicZoomSpeed = std::max(0.5f, m_orbitDistance * 0.1f) * m_zoomSpeed;
         m_orbitDistance -= (zoomDelta * dynamicZoomSpeed);
 
         // The Dolly Zoom Upgrade
@@ -106,7 +104,7 @@ namespace BimCore {
 
         // Trigger the animation lock
         m_isFocusing = true;
-        m_isResettingAngles = false; // <-- FIX: Don't rotate the camera during a normal object focus!
+        m_isResettingAngles = false; 
         m_focusProgress = 0.0f;
     }
 
@@ -118,7 +116,6 @@ namespace BimCore {
         m_startPitch = m_pitch;
 
         // --- MAGIC: Find the shortest rotational path! ---
-        // Prevents the camera from spinning multiple times if the user orbited a lot
         float deltaYaw = targetYaw - m_yaw;
         while (deltaYaw > 180.0f) deltaYaw -= 360.0f;
         while (deltaYaw < -180.0f) deltaYaw += 360.0f;
@@ -145,7 +142,6 @@ namespace BimCore {
         m_pivot = glm::mix(m_startPivot, m_targetPivot, t);
         m_orbitDistance = glm::mix(m_startDistance, m_targetDistance, t);
 
-        // --- NEW: Animate the angles if this is a full reset! ---
         if (m_isResettingAngles) {
             m_yaw = glm::mix(m_startYaw, m_targetYaw, t);
             m_pitch = glm::mix(m_startPitch, m_targetPitch, t);
@@ -174,7 +170,6 @@ namespace BimCore {
 
     void Camera::UpdateMatrices() {
         if (!m_dirty) return;
-        // Instead of looking at a fixed target, we look at whatever is right in front of us
         m_viewMatrix = glm::lookAt(m_position, m_position + m_front, m_up);
         m_projMatrix = glm::perspective(m_fov, m_aspect, m_near, m_far);
         m_dirty = false;

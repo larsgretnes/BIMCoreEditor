@@ -7,7 +7,6 @@
 
 namespace BimCore {
 
-    // Helper getter added for main.cpp
     bool InputController::IsFlightMode() const {
         return m_navMode == NavigationMode::Flight;
     }
@@ -50,7 +49,6 @@ namespace BimCore {
             if (fNow && !m_fWasDown) triggerFocus = true;
             m_fWasDown = fNow;
 
-            // INSTANT DESELECT ON HIDE
             const bool hNow = window.IsKeyPressed(config.KeyHide);
             if (hNow && !m_hWasDown && !selection.objects.empty()) {
                 bool allHidden = true;
@@ -76,6 +74,22 @@ namespace BimCore {
                 selection.hiddenStateChanged = true;
             }
             m_delWasDown = delNow;
+
+            // =================================================================
+            // DECOUPLED KEYBOARD MOVEMENT (ALWAYS ACTIVE)
+            // =================================================================
+            glm::vec3 moveDir(0.0f);
+            if (window.IsKeyPressed(config.KeyForward))  moveDir.z += 1.0f;
+            if (window.IsKeyPressed(config.KeyBackward)) moveDir.z -= 1.0f;
+            if (window.IsKeyPressed(config.KeyRight))    moveDir.x += 1.0f;
+            if (window.IsKeyPressed(config.KeyLeft))     moveDir.x -= 1.0f;
+            if (window.IsKeyPressed(config.KeyUp))       moveDir.y += 1.0f;
+            if (window.IsKeyPressed(config.KeyDown))     moveDir.y -= 1.0f;
+
+            if (glm::length(moveDir) > 0.01f) {
+                float speedMult = config.BaseSpeed * (window.IsKeyPressed(config.KeySprint) ? config.SprintMultiplier : 1.0f);
+                camera.ProcessKeyboard(moveDir * speedMult, deltaTime);
+            }
         }
 
         double mx, my;
@@ -86,10 +100,16 @@ namespace BimCore {
         m_lastMouseX = mx;
         m_lastMouseY = my;
 
-        if (m_navMode == NavigationMode::CAD) {
-            float scroll = (float)window.ConsumeScrollDelta();
-            if (!uiHovered && std::abs(scroll) > 0.01f) camera.ProcessZoom(scroll);
+        // Sync zoom speed and process scroll wheel
+        camera.SetZoomSpeed(config.ZoomSpeed);
+        float scroll = (float)window.ConsumeScrollDelta();
+        
+        if (!uiHovered && std::abs(scroll) > 0.01f) {
+            float zoomMult = window.IsKeyPressed(config.KeySprint) ? config.ZoomSlowMultiplier : 1.0f;
+            camera.ProcessZoom(scroll * zoomMult);
+        }
 
+        if (m_navMode == NavigationMode::CAD) {
             if (!uiHovered) {
                 bool leftClickPan   = (selection.activeTool == InteractionTool::Pan) && window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
                 bool leftClickOrbit = (selection.activeTool == InteractionTool::Orbit) && window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
@@ -105,21 +125,8 @@ namespace BimCore {
             }
 
         } else {
-            // FLIGHT MODE: INVERTED VERTICAL AXIS
+            // FLIGHT MODE: INVERTED VERTICAL AXIS for Mouse Look
             camera.ProcessMouseMovement(deltaX, -deltaY);
-
-            if (!uiTyping) {
-                glm::vec3 moveDir(0.0f);
-                if (window.IsKeyPressed(config.KeyForward))  moveDir.z += 1.0f;
-                if (window.IsKeyPressed(config.KeyBackward)) moveDir.z -= 1.0f;
-                if (window.IsKeyPressed(config.KeyRight))    moveDir.x += 1.0f;
-                if (window.IsKeyPressed(config.KeyLeft))     moveDir.x -= 1.0f;
-                if (window.IsKeyPressed(config.KeyUp))       moveDir.y += 1.0f;
-                if (window.IsKeyPressed(config.KeyDown))     moveDir.y -= 1.0f;
-
-                float speedMult = config.BaseSpeed * (window.IsKeyPressed(config.KeySprint) ? config.SprintMultiplier : 1.0f);
-                camera.ProcessKeyboard(moveDir * speedMult, deltaTime);
-            }
         }
     }
 

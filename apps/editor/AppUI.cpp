@@ -45,8 +45,28 @@ namespace BimCore {
 
     void AppUI::Render(SelectionState& selection, GraphicsContext& graphics, std::shared_ptr<BimDocument> document, Camera& camera, float configMaxExplode, bool& triggerFocus, bool isFlightMode) {
         ImGuiIO& io = ImGui::GetIO();
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
 
-        if (isFlightMode) io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
+        // ---------------------------------------------------------------------
+        // FLY MODE HUD OVERLAY (Always renders if active)
+        // ---------------------------------------------------------------------
+        if (isFlightMode) {
+            io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
+
+            ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, viewport->WorkPos.y + 20.0f), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+            ImGui::SetNextWindowBgAlpha(0.65f); // Transparent background
+            ImGui::Begin("FlyModeOverlay", nullptr, 
+                ImGuiWindowFlags_NoDecoration | 
+                ImGuiWindowFlags_AlwaysAutoResize | 
+                ImGuiWindowFlags_NoSavedSettings | 
+                ImGuiWindowFlags_NoFocusOnAppearing | 
+                ImGuiWindowFlags_NoNav | 
+                ImGuiWindowFlags_NoMove);
+                
+            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), ICON_FA_ARROWS_ALT "  FLY MODE ACTIVE");
+            ImGui::Text("Press TAB to unlock cursor");
+            ImGui::End();
+        }
 
         if (!selection.showUI) {
             ImGui::Render();
@@ -54,7 +74,6 @@ namespace BimCore {
         }
 
         bool editingActiveAtStartOfFrame = !selection.activeEditGuid.empty();
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
         bool isActivelyLoading = selection.loadState && !selection.loadState->isLoaded.load() && selection.loadState->progress.load() > 0.0f;
 
         const float leftPanelWidth = 400.0f;
@@ -118,14 +137,14 @@ namespace BimCore {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", id);
         };
 
-            drawToolBtn(InteractionTool::Select, ICON_FA_MOUSE_POINTER, "Select (1)"); ImGui::SameLine();
-            drawToolBtn(InteractionTool::Pan, ICON_FA_ARROWS_ALT, "Pan (2)"); ImGui::SameLine();
-            drawToolBtn(InteractionTool::Orbit, ICON_FA_SYNC, "Orbit (3)");
+        drawToolBtn(InteractionTool::Select, ICON_FA_MOUSE_POINTER, "Select (1)"); ImGui::SameLine();
+        drawToolBtn(InteractionTool::Pan, ICON_FA_ARROWS_ALT, "Pan (2)"); ImGui::SameLine();
+        drawToolBtn(InteractionTool::Orbit, ICON_FA_SYNC, "Orbit (3)");
 
-            ImGui::Spacing();
-            if (ImGui::Button(ICON_FA_TIMES_CIRCLE)) { selection.objects.clear(); }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear selected");
-            ImGui::SameLine();
+        ImGui::Spacing();
+        if (ImGui::Button(ICON_FA_TIMES_CIRCLE)) { selection.objects.clear(); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear selected");
+        ImGui::SameLine();
         if (ImGui::Button(ICON_FA_EYE)) { selection.hiddenObjects.clear(); selection.hiddenStateChanged = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show all");
         ImGui::SameLine();
@@ -280,7 +299,6 @@ namespace BimCore {
 
                             bool isSelected = std::any_of(selection.objects.begin(), selection.objects.end(), [&](const SelectedObject& o) { return o.guid == sub.guid; });
 
-                            // Render Selected State with scrolling
                             if (ImGui::Selectable(label.c_str(), isSelected)) {
                                 handleShiftSelection(i, res.subMeshIndex, "SEARCH_RES", searchMeshIndices, subMeshes);
                             }
@@ -291,7 +309,6 @@ namespace BimCore {
             } else {
                 for (const auto& [type, indices] : selection.cachedGroups) {
 
-                    // PRE-CHECK GROUP FOR TAGS AND ACTIVE SELECTIONS
                     bool groupHasHidden = false, groupHasDeleted = false, groupHasEdited = false, groupHasSelected = false;
                     for (uint32_t idx : indices) {
                         const auto& sub = subMeshes[idx];
@@ -308,7 +325,6 @@ namespace BimCore {
                     if (groupHasDeleted) extraTags += " (deleted elements)";
                     if (groupHasEdited) extraTags += " (edited elements)";
 
-                    // Auto-expand tree node if something inside it was clicked in 3D
                     if (groupHasSelected) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
 
                     if (ImGui::TreeNodeEx(type.c_str(), 0, "%s (%zu)%s", type.c_str(), indices.size(), extraTags.c_str())) {
@@ -336,7 +352,6 @@ namespace BimCore {
 
                                 bool isSelected = std::any_of(selection.objects.begin(), selection.objects.end(), [&](const SelectedObject& o) { return o.guid == sub.guid; });
 
-                                // Apply custom text colors
                                 if (isDeleted) {
                                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
                                 } else if (isHidden) {
@@ -347,12 +362,9 @@ namespace BimCore {
                                     handleShiftSelection(i, indices[i], type, indices, subMeshes);
                                 }
 
-                                // Auto-scroll
                                 if (isSelected && triggerFocus) ImGui::SetScrollHereY(0.5f);
-
                                 if (isDeleted || isHidden) ImGui::PopStyleColor();
 
-                                // Draw Strike-through for deleted items
                                 if (isDeleted) {
                                     ImVec2 min = ImGui::GetItemRectMin();
                                     ImVec2 max = ImGui::GetItemRectMax();

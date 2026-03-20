@@ -21,9 +21,13 @@ namespace BimCore {
         float SprintMultiplier = 5.0f;
         float MouseSensitivityX = 1.0f;
         float MouseSensitivityY = 1.0f;
-        float MaxExplodeFactor = 10.0f;
+        float MaxExplodeFactor = 20.0f;
+        
+        // --- Zoom Settings ---
+        float ZoomSpeed = 0.5f; // 100x slower default
+        float ZoomSlowMultiplier = 0.2f;
 
-        int KeyToggleNavigation = GLFW_KEY_TAB;
+        int KeyToggleNavigation = GLFW_KEY_F1; // Moved off TAB to free up UI navigation
         int KeyToggleLighting   = GLFW_KEY_L;
         int KeyFocus            = GLFW_KEY_F;
         int KeyHide             = GLFW_KEY_H;
@@ -95,6 +99,8 @@ namespace BimCore {
             else if (key == "MouseSensitivityX") MouseSensitivityX = std::stof(val);
             else if (key == "MouseSensitivityY") MouseSensitivityY = std::stof(val);
             else if (key == "MaxExplodeFactor") MaxExplodeFactor = std::stof(val);
+            else if (key == "ZoomSpeed") ZoomSpeed = std::stof(val);
+            else if (key == "ZoomSlowMultiplier") ZoomSlowMultiplier = std::stof(val);
             else {
                 int mappedKey = ParseKey(val);
                 if (mappedKey != -1) {
@@ -123,7 +129,7 @@ namespace BimCore {
 
         int ParseKey(const std::string& val) {
             static std::unordered_map<std::string, int> keyMap = {
-                {"GLFW_KEY_TAB", GLFW_KEY_TAB}, {"GLFW_KEY_L", GLFW_KEY_L}, {"GLFW_KEY_F", GLFW_KEY_F},
+                {"GLFW_KEY_TAB", GLFW_KEY_TAB}, {"GLFW_KEY_F1", GLFW_KEY_F1}, {"GLFW_KEY_L", GLFW_KEY_L}, {"GLFW_KEY_F", GLFW_KEY_F},
                 {"GLFW_KEY_H", GLFW_KEY_H}, {"GLFW_KEY_W", GLFW_KEY_W}, {"GLFW_KEY_A", GLFW_KEY_A},
                 {"GLFW_KEY_S", GLFW_KEY_S}, {"GLFW_KEY_D", GLFW_KEY_D}, {"GLFW_KEY_Q", GLFW_KEY_Q},
                 {"GLFW_KEY_E", GLFW_KEY_E}, {"GLFW_KEY_1", GLFW_KEY_1}, {"GLFW_KEY_2", GLFW_KEY_2},
