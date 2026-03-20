@@ -22,7 +22,7 @@ namespace BimCore {
             BIM_ERR("IfcLoader", msg);
             if (state) { state->hasError.store(true); state->SetStatus(msg, 1.0f); }
         };
-
+        
         if (state) { state->hasError.store(false); state->SetStatus("Verifying file...", 0.05f); }
 
         // --- 1. HEURISTIC MEMORY PROFILING ---
@@ -31,8 +31,7 @@ namespace BimCore {
             setErr("File not found or inaccessible: " + filepath);
             return nullptr;
         }
-
-        // Get file size for our pseudo-arena reservation
+        
         size_t fileSize = check.tellg();
         check.close();
 
@@ -44,43 +43,37 @@ namespace BimCore {
             if (state) state->SetStatus("Initialising geometry kernel...", 0.25f);
             ifcopenshell::geometry::Settings settings;
             settings.get<ifcopenshell::geometry::settings::UseWorldCoords>().value = true;
-
-            // --- 2. KERNEL OPTIMIZATION (Updated for IfcOpenShell 0.7+) ---
-            // Loosen the deflection tolerance to drastically speed up curved surface triangulation
-            settings.get<ifcopenshell::geometry::settings::MesherLinearDeflection>().value = 0.005;
-
-            auto kernel = std::make_unique<IfcGeom::OpenCascadeKernel>(settings);
+            settings.get<ifcopenshell::geometry::settings::MesherLinearDeflection>().value = 0.005; 
 
             const unsigned int hwThreads = std::thread::hardware_concurrency();
-            const unsigned int useThreads = (hwThreads > 0) ? hwThreads : 2;
+            const int useThreads = (hwThreads > 0) ? static_cast<int>(hwThreads) : 2;
             BIM_LOG("IfcLoader", "Geometry kernel threads: " << useThreads);
 
+            // --- 2. KERNEL INVOCATION ---
+            auto kernel = std::make_unique<IfcGeom::OpenCascadeKernel>(settings);
             IfcGeom::Iterator geomIter(std::move(kernel), settings, ifcDb.get(), useThreads);
             if (!geomIter.initialize()) { setErr("Geometry iterator failed to initialise."); return nullptr; }
 
             if (state) state->SetStatus("Triangulating geometry...", 0.35f);
-
+            
             RenderMesh mesh;
             float minB[3] = { kFloatMax, kFloatMax, kFloatMax };
             float maxB[3] = { kFloatMin, kFloatMin, kFloatMin };
 
             // --- 3. PSEUDO-ARENA RESERVATION ---
-            // Based on heuristics: 1MB of IFC text generally yields roughly ~15,000 vertices
-            // depending on parametric complexity. We over-allocate slightly to prevent vector resizing mid-loop.
-            size_t estimatedVertices = (fileSize / 1024) * 15;
+            size_t estimatedVertices = (fileSize / 1024) * 15; 
             size_t estimatedIndices = estimatedVertices * 3;
-            size_t estimatedSubMeshes = (fileSize / 1024) / 10; // Approx 1 element per 10kb
-
+            size_t estimatedSubMeshes = (fileSize / 1024) / 10;
+            
             mesh.vertices.reserve(estimatedVertices);
             mesh.indices.reserve(estimatedIndices);
             mesh.subMeshes.reserve(estimatedSubMeshes);
-
+            
             BIM_LOG("IfcLoader", "Reserved VRAM capacity for ~" << estimatedVertices << " vertices based on file size.");
 
             do {
                 // --- 4. LIVE PROGRESS TRACKING ---
                 if (state) {
-                    // Map the Iterator's internal 0-100 progress into our 35% - 90% load window
                     float kernelProg = static_cast<float>(geomIter.progress()) / 100.0f;
                     state->SetStatus("Triangulating geometry...", 0.35f + (kernelProg * 0.55f));
                 }
@@ -182,23 +175,22 @@ namespace BimCore {
                 mesh.maxBounds[j] = maxB[j];
                 mesh.center[j] = (minB[j] + maxB[j]) * 0.5f;
             }
-
-            // Shrink the reserved capacity down to fit perfectly to free unused RAM
+            
             mesh.vertices.shrink_to_fit();
             mesh.indices.shrink_to_fit();
             mesh.subMeshes.shrink_to_fit();
-
+            
             mesh.originalVertices = mesh.vertices;
-
+            
             if (state) state->SetStatus("Ready.", 1.0f);
             BIM_LOG("IfcLoader", "Load complete — " << mesh.vertices.size() << " verts, " << mesh.subMeshes.size() << " submeshes.");
-
+            
             return std::make_shared<BimDocument>(ifcDb, std::move(mesh), filepath);
-
-        } catch (const std::exception& e) {
+            
+        } catch (const std::exception& e) { 
             setErr(std::string("Exception: ") + e.what());
-        } catch (...) {
-            setErr("Unknown fatal exception during parse.");
+        } catch (...) { 
+            setErr("Unknown fatal exception during parse."); 
         }
         return nullptr;
     }

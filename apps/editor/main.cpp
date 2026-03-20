@@ -10,6 +10,8 @@
 #include <memory>
 #include <unordered_set>
 #include <fstream>
+#include <vector>
+#include <glm/glm.hpp>
 
 #include "platform/Window.h"
 #include "graphics/GraphicsContext.h"
@@ -184,11 +186,10 @@ int main() {
             std::string savePath = saveDialog.result();
 
             if (!savePath.empty()) {
-
                 // 1. Permanently remove soft-deleted objects from AST and RenderMesh
                 for (const auto& guid : uiSystem.state.deletedObjects) {
                     document->DeleteElement(guid);
-                    uiSystem.state.hiddenObjects.erase(guid); // Keep our hidden list clean
+                    uiSystem.state.hiddenObjects.erase(guid);
                 }
 
                 // 2. Flush all edited properties into the AST & Reset Document Ledger
@@ -208,7 +209,7 @@ int main() {
                 uiSystem.state.deletedObjects.clear();
                 uiSystem.state.objects.clear();
                 uiSystem.state.cachedNames.clear();
-                uiSystem.state.groupsBuilt = false; // Triggers UI to rebuild from the now smaller RenderMesh
+                uiSystem.state.groupsBuilt = false;
 
                 // Update Window Path
                 size_t pos = savePath.find_last_of("/\\");
@@ -229,11 +230,45 @@ int main() {
                 if (b.valid) camera.FocusOn((b.min + b.max) * 0.5f, glm::length(b.max - b.min) * 0.5f);
             }
 
+            // =====================================================================
+            // THE EXPLODE MATH (CPU-Side)
+            // =====================================================================
             if (uiSystem.state.updateGeometry) {
-                graphics.UpdateGeometry(document->GetGeometry().vertices);
+                auto& mesh = document->GetGeometry();
+                
+                // 1. Reset mesh back to its original state
+                mesh.vertices = mesh.originalVertices;
+
+                // 2. Apply explode offsets if the slider is > 0
+                if (uiSystem.state.explodeFactor > 0.01f) {
+                    glm::vec3 globalCenter(mesh.center[0], mesh.center[1], mesh.center[2]);
+                    
+                    // Keep track of shifted vertices so we don't translate shared triangle points twice
+                    std::vector<bool> shifted(mesh.vertices.size(), false);
+
+                    for (const auto& sub : mesh.subMeshes) {
+                        glm::vec3 subCenter(sub.center[0], sub.center[1], sub.center[2]);
+                        glm::vec3 dir = subCenter - globalCenter;
+                        glm::vec3 offset = dir * uiSystem.state.explodeFactor;
+
+                        for (uint32_t i = 0; i < sub.indexCount; ++i) {
+                            uint32_t vIdx = mesh.indices[sub.startIndex + i];
+                            if (!shifted[vIdx]) {
+                                mesh.vertices[vIdx].position[0] += offset.x;
+                                mesh.vertices[vIdx].position[1] += offset.y;
+                                mesh.vertices[vIdx].position[2] += offset.z;
+                                shifted[vIdx] = true;
+                            }
+                        }
+                    }
+                }
+
+                // 3. Upload the shifted vertices to the GPU
+                graphics.UpdateGeometry(mesh.vertices);
                 uiSystem.state.updateGeometry = false;
             }
 
+            // --- Visibility and Highlight Updates ---
             std::vector<uint32_t> solid, trans;
             for (const auto& sub : document->GetGeometry().subMeshes) {
                 if (uiSystem.state.hiddenObjects.count(sub.guid)) continue;
@@ -249,14 +284,33 @@ int main() {
             } else {
                 graphics.SetHighlight(false, {}, 0);
             }
+            
+            // --- Sync Clipping Planes to GPU ---
+            graphics.SetClippingPlanes(
+                uiSystem.state.showPlaneX, uiSystem.state.clipX,
+                uiSystem.state.showPlaneY, uiSystem.state.clipY,
+                uiSystem.state.showPlaneZ, uiSystem.state.clipZ,
+                glm::vec3(document->GetGeometry().minBounds[0], document->GetGeometry().minBounds[1], document->GetGeometry().minBounds[2]),
+                glm::vec3(document->GetGeometry().maxBounds[0], document->GetGeometry().maxBounds[1], document->GetGeometry().maxBounds[2])
+            );
         }
 
+        // =====================================================================
+        // UNIFORM DATA UPLOAD
+        // =====================================================================
         SceneUniforms scene{};
         scene.viewProjection = camera.GetViewProjectionMatrix();
         scene.lightingMode = currentLightMode;
         scene.highlightColor = uiSystem.state.color;
-        graphics.UpdateScene(scene);
+        
+        scene.clipActive.x = uiSystem.state.showPlaneX ? 1.0f : 0.0f;
+        scene.clipActive.y = uiSystem.state.showPlaneY ? 1.0f : 0.0f;
+        scene.clipActive.z = uiSystem.state.showPlaneZ ? 1.0f : 0.0f;
+        scene.clipDistances.x = uiSystem.state.clipX;
+        scene.clipDistances.y = uiSystem.state.clipY;
+        scene.clipDistances.z = uiSystem.state.clipZ;
 
+        graphics.UpdateScene(scene);
         graphics.RenderFrame();
     }
 

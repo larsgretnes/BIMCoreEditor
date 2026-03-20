@@ -31,17 +31,17 @@
 *.out
 *.app
 
-# CMake & Build directories
+# CMake and Builds
 build/
-bin/
-CMakeCache.txt
-CMakeFiles/
-cmake-build-*/
+dist/
+out/
+.vs/
+*.user
 
-# Editor directories
-.vscode/
-.idea/
+# Dependencies
+_deps/
+.cache/
 
-# OS generated files
+# OS Generated
 .DS_Store
 Thumbs.db
