@@ -2,19 +2,17 @@
 // BimCore/graphics/GraphicsContext.cpp
 // =============================================================================
 #include "GraphicsContext.h"
-#include "ShaderLibrary.h" // <-- NEW: Include our extracted shaders
+#include "ShaderLibrary.h"
 #include "Core.h"
 #include <stdexcept>
 #include <cstring>
 #include <vector>
 #include <iostream>
 
-// ImGui backend headers
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_wgpu.h>
 
-// Platform-specific GLFW native handle accessors
 #if defined(BIM_PLATFORM_WINDOWS)
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <windows.h>
@@ -28,10 +26,6 @@
 #include <GLFW/glfw3native.h>
 
 namespace BimCore {
-
-    // =============================================================================
-    // Construction / Destruction
-    // =============================================================================
 
     GraphicsContext::GraphicsContext(GLFWwindow* window, int width, int height)
     : m_width(static_cast<uint32_t>(width))
@@ -56,7 +50,6 @@ namespace BimCore {
     }
 
     GraphicsContext::~GraphicsContext() {
-        // Release in reverse-init order
         if (m_glassIndexBuffer)              wgpuBufferRelease(m_glassIndexBuffer);
         if (m_glassVertexBuffer)             wgpuBufferRelease(m_glassVertexBuffer);
         if (m_aabbIndexBuffer)               wgpuBufferRelease(m_aabbIndexBuffer);
@@ -87,41 +80,31 @@ namespace BimCore {
         if (m_instance) wgpuInstanceRelease(m_instance);
     }
 
-    // =============================================================================
-    // Initialisation helpers
-    // =============================================================================
-
     void GraphicsContext::CreateSurface(GLFWwindow* window) {
         WGPUSurfaceDescriptor surfaceDesc = {};
 
         #if defined(BIM_PLATFORM_WINDOWS)
-        BIM_LOG("GPU", "Creating Win32 HWND surface...");
         WGPUSurfaceSourceWindowsHWND hwndDesc = {};
         hwndDesc.chain.sType = WGPUSType_SurfaceSourceWindowsHWND;
         hwndDesc.hinstance   = GetModuleHandle(nullptr);
         hwndDesc.hwnd        = glfwGetWin32Window(window);
         surfaceDesc.nextInChain = reinterpret_cast<const WGPUChainedStruct*>(&hwndDesc);
-
         #elif defined(BIM_PLATFORM_MACOS)
-        BIM_LOG("GPU", "Creating Cocoa surface...");
         WGPUSurfaceSourceCocoaWindow cocoaDesc = {};
         cocoaDesc.chain.sType = WGPUSType_SurfaceSourceCocoaWindow;
         cocoaDesc.window      = glfwGetCocoaWindow(window);
         surfaceDesc.nextInChain = reinterpret_cast<const WGPUChainedStruct*>(&cocoaDesc);
-
         #elif defined(BIM_PLATFORM_LINUX)
         const int platform = glfwGetPlatform();
         WGPUSurfaceSourceWaylandSurface waylandDesc = {};
         WGPUSurfaceSourceXlibWindow     x11Desc     = {};
 
         if (platform == GLFW_PLATFORM_WAYLAND) {
-            BIM_LOG("GPU", "Creating Wayland surface...");
             waylandDesc.chain.sType = WGPUSType_SurfaceSourceWaylandSurface;
             waylandDesc.display     = glfwGetWaylandDisplay();
             waylandDesc.surface     = glfwGetWaylandWindow(window);
             surfaceDesc.nextInChain = reinterpret_cast<const WGPUChainedStruct*>(&waylandDesc);
         } else if (platform == GLFW_PLATFORM_X11) {
-            BIM_LOG("GPU", "Creating X11 surface...");
             x11Desc.chain.sType = WGPUSType_SurfaceSourceXlibWindow;
             x11Desc.display     = glfwGetX11Display();
             x11Desc.window      = glfwGetX11Window(window);
@@ -169,16 +152,12 @@ namespace BimCore {
         WGPUSurfaceCapabilities caps = {};
         wgpuSurfaceGetCapabilities(m_surface, m_adapter, &caps);
 
-        m_surfaceFormat = (caps.formatCount > 0)
-        ? caps.formats[0]
-        : WGPUTextureFormat_BGRA8Unorm;
+        m_surfaceFormat = (caps.formatCount > 0) ? caps.formats[0] : WGPUTextureFormat_BGRA8Unorm;
 
         WGPUSurfaceConfiguration cfg = {};
         cfg.device      = m_device;
         cfg.format      = m_surfaceFormat;
-        cfg.alphaMode   = (caps.alphaModeCount > 0)
-        ? caps.alphaModes[0]
-        : WGPUCompositeAlphaMode_Opaque;
+        cfg.alphaMode   = (caps.alphaModeCount > 0) ? caps.alphaModes[0] : WGPUCompositeAlphaMode_Opaque;
         cfg.usage       = WGPUTextureUsage_RenderAttachment;
         cfg.width       = m_width;
         cfg.height      = m_height;
@@ -206,19 +185,16 @@ namespace BimCore {
     }
 
     void GraphicsContext::CreateUniformBuffers() {
-        // Uniform buffer (scene data — camera, lighting, clipping)
         WGPUBufferDescriptor ubDesc = {};
         ubDesc.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Uniform;
         ubDesc.size  = sizeof(SceneUniforms);
         m_uniformBuffer = wgpuDeviceCreateBuffer(m_device, &ubDesc);
 
-        // Instance storage buffer (up to 1 million transforms)
         WGPUBufferDescriptor instDesc = {};
         instDesc.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Storage;
         instDesc.size  = 1'000'000 * sizeof(glm::mat4);
         m_instanceBuffer = wgpuDeviceCreateBuffer(m_device, &instDesc);
 
-        // Bind group layout
         WGPUBindGroupLayoutEntry bglEntries[2] = {};
         bglEntries[0].binding               = 0;
         bglEntries[0].visibility            = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
@@ -235,7 +211,6 @@ namespace BimCore {
         bglDesc.entries    = bglEntries;
         WGPUBindGroupLayout bgl = wgpuDeviceCreateBindGroupLayout(m_device, &bglDesc);
 
-        // Bind group
         WGPUBindGroupEntry bgEntries[2] = {};
         bgEntries[0].binding = 0;
         bgEntries[0].buffer  = m_uniformBuffer;
@@ -253,10 +228,6 @@ namespace BimCore {
 
         wgpuBindGroupLayoutRelease(bgl);
     }
-
-    // =============================================================================
-    // Pipeline creation
-    // =============================================================================
 
     WGPUShaderModule GraphicsContext::CreateShaderModule(const char* wgsl) const {
         WGPUShaderSourceWGSL src = {};
@@ -281,28 +252,17 @@ namespace BimCore {
     }
 
     void GraphicsContext::CreateMainPipeline() {
-        BIM_LOG("GPU", "Compiling main + transparent pipelines...");
-
-        // Uses the centralized shader from ShaderLibrary.h
         WGPUShaderModule shader = CreateShaderModule(Shaders::kMainWGSL);
 
-        // Pipeline layout
         WGPUBindGroupLayoutEntry bgle[2] = {};
-        bgle[0].binding               = 0;
-        bgle[0].visibility            = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
-        bgle[0].buffer.type           = WGPUBufferBindingType_Uniform;
-        bgle[0].buffer.minBindingSize = sizeof(SceneUniforms);
-        bgle[1].binding               = 1;
-        bgle[1].visibility            = WGPUShaderStage_Vertex;
-        bgle[1].buffer.type           = WGPUBufferBindingType_ReadOnlyStorage;
-        bgle[1].buffer.minBindingSize = sizeof(glm::mat4);
+        bgle[0].binding = 0; bgle[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+        bgle[0].buffer.type = WGPUBufferBindingType_Uniform; bgle[0].buffer.minBindingSize = sizeof(SceneUniforms);
+        bgle[1].binding = 1; bgle[1].visibility = WGPUShaderStage_Vertex;
+        bgle[1].buffer.type = WGPUBufferBindingType_ReadOnlyStorage; bgle[1].buffer.minBindingSize = sizeof(glm::mat4);
 
-        WGPUBindGroupLayoutDescriptor bgld = {};
-        bgld.entryCount = 2; bgld.entries = bgle;
+        WGPUBindGroupLayoutDescriptor bgld = {}; bgld.entryCount = 2; bgld.entries = bgle;
         WGPUBindGroupLayout bgl = wgpuDeviceCreateBindGroupLayout(m_device, &bgld);
-
-        WGPUPipelineLayoutDescriptor pld = {};
-        pld.bindGroupLayoutCount = 1; pld.bindGroupLayouts = &bgl;
+        WGPUPipelineLayoutDescriptor pld = {}; pld.bindGroupLayoutCount = 1; pld.bindGroupLayouts = &bgl;
         WGPUPipelineLayout pipelineLayout = wgpuDeviceCreatePipelineLayout(m_device, &pld);
 
         std::vector<WGPUVertexAttribute> attrs;
@@ -343,10 +303,9 @@ namespace BimCore {
         pd.multisample.mask          = ~0u;
         m_pipeline = wgpuDeviceCreateRenderPipeline(m_device, &pd);
 
-        // Transparent variant — alpha blend, depth read-only, fs_transparent entry
         WGPUBlendState alphaBlend = {};
-        alphaBlend.color = { WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha,           WGPUBlendFactor_OneMinusSrcAlpha };
-        alphaBlend.alpha = { WGPUBlendOperation_Add, WGPUBlendFactor_One,                WGPUBlendFactor_OneMinusSrcAlpha };
+        alphaBlend.color = { WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha };
+        alphaBlend.alpha = { WGPUBlendOperation_Add, WGPUBlendFactor_One,      WGPUBlendFactor_OneMinusSrcAlpha };
 
         WGPUColorTargetState transTarget = opaqueTarget;
         transTarget.blend = &alphaBlend;
@@ -369,7 +328,6 @@ namespace BimCore {
     }
 
     void GraphicsContext::CreateHighlightPipeline() {
-        BIM_LOG("GPU", "Compiling highlight pipeline...");
         WGPUShaderModule shader = CreateShaderModule(Shaders::kHighlightWGSL);
 
         WGPUBindGroupLayoutEntry bgle[2] = {};
@@ -414,7 +372,6 @@ namespace BimCore {
     }
 
     void GraphicsContext::CreateAABBPipeline() {
-        BIM_LOG("GPU", "Compiling AABB pipeline...");
         WGPUShaderModule shader = CreateShaderModule(Shaders::kAABBWGSL);
 
         WGPUBindGroupLayoutEntry bgle[2] = {};
@@ -451,7 +408,6 @@ namespace BimCore {
     }
 
     void GraphicsContext::CreateGlassPipeline() {
-        BIM_LOG("GPU", "Compiling glass clipping-plane pipeline...");
         WGPUShaderModule shader = CreateShaderModule(Shaders::kGlassWGSL);
 
         WGPUBindGroupLayoutEntry bgle[2] = {};
@@ -481,7 +437,7 @@ namespace BimCore {
         pd.vertex.entryPoint = WGPUStringView{ "vs_main", 7 };
         pd.vertex.bufferCount = 1; pd.vertex.buffers = &vbl;
         pd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
-        pd.primitive.cullMode = WGPUCullMode_None; // Glass is double-sided
+        pd.primitive.cullMode = WGPUCullMode_None;
         pd.depthStencil = &ds; pd.fragment = &frag;
         pd.multisample.count = 1; pd.multisample.mask = ~0u;
         m_glassPipeline = wgpuDeviceCreateRenderPipeline(m_device, &pd);
@@ -492,7 +448,6 @@ namespace BimCore {
     }
 
     void GraphicsContext::AllocateGeometryBuffers() {
-        // AABB vertex buffer (8 corners, fixed size)
         WGPUBufferDescriptor avbd = {}; avbd.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Vertex; avbd.size = 8 * sizeof(Vertex);
         m_aabbVertexBuffer = wgpuDeviceCreateBuffer(m_device, &avbd);
 
@@ -501,16 +456,11 @@ namespace BimCore {
         m_aabbIndexBuffer = wgpuDeviceCreateBuffer(m_device, &aibd);
         wgpuQueueWriteBuffer(m_queue, m_aabbIndexBuffer, 0, kAABBIndices, sizeof(kAABBIndices));
 
-        // Glass clipping plane buffers (max 3 planes × 4 verts / 6 indices each)
-        WGPUBufferDescriptor gvbd = {}; gvbd.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Vertex; gvbd.size = 12 * sizeof(Vertex);
+        WGPUBufferDescriptor gvbd = {}; gvbd.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Vertex; gvbd.size = 24 * sizeof(Vertex);
         m_glassVertexBuffer = wgpuDeviceCreateBuffer(m_device, &gvbd);
-        WGPUBufferDescriptor gibd = {}; gibd.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Index; gibd.size = 18 * sizeof(uint32_t);
+        WGPUBufferDescriptor gibd = {}; gibd.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Index; gibd.size = 36 * sizeof(uint32_t);
         m_glassIndexBuffer = wgpuDeviceCreateBuffer(m_device, &gibd);
     }
-
-    // =============================================================================
-    // Per-frame public interface
-    // =============================================================================
 
     void GraphicsContext::UpdateScene(const SceneUniforms& uniforms) {
         if (m_uniformBuffer)
@@ -524,13 +474,10 @@ namespace BimCore {
                              transforms.data(), transforms.size() * sizeof(glm::mat4));
     }
 
-    void GraphicsContext::UploadMesh(const std::vector<Vertex>& vertices,
-                                     const std::vector<uint32_t>& indices)
-    {
+    void GraphicsContext::UploadMesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices) {
         if (vertices.empty() || indices.empty()) return;
         m_indexCount = static_cast<uint32_t>(indices.size());
 
-        // Release old mesh buffers
         if (m_vertexBuffer) { wgpuBufferRelease(m_vertexBuffer); m_vertexBuffer = nullptr; }
         if (m_indexBuffer)  { wgpuBufferRelease(m_indexBuffer);  m_indexBuffer  = nullptr; }
         if (m_activeIndexBuffer) { wgpuBufferRelease(m_activeIndexBuffer); m_activeIndexBuffer = nullptr; }
@@ -549,7 +496,6 @@ namespace BimCore {
         m_vertexBuffer = makeBuffer(WGPUBufferUsage_Vertex, vertices.data(), vertices.size() * sizeof(Vertex));
         m_indexBuffer  = makeBuffer(WGPUBufferUsage_Index,  indices.data(),  indices.size()  * sizeof(uint32_t));
 
-        // Dynamic visibility buffers — same size as the full index buffer
         {
             WGPUBufferDescriptor desc = {};
             desc.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Index;
@@ -560,7 +506,6 @@ namespace BimCore {
             m_activeTransparentIndexCount = 0;
         }
 
-        // Wireframe line index buffer (each triangle edge = 2 indices)
         std::vector<uint32_t> lineIndices;
         lineIndices.reserve(indices.size() * 2);
         for (size_t i = 0; i + 2 < indices.size(); i += 3) {
@@ -568,11 +513,7 @@ namespace BimCore {
             lineIndices.push_back(indices[i+1]); lineIndices.push_back(indices[i+2]);
             lineIndices.push_back(indices[i+2]); lineIndices.push_back(indices[i]);
         }
-        m_lineIndexBuffer = makeBuffer(WGPUBufferUsage_Index,
-                                       lineIndices.data(), lineIndices.size() * sizeof(uint32_t));
-
-        BIM_LOG("GPU", "Mesh uploaded — " << vertices.size() << " verts, "
-        << indices.size() << " indices.");
+        m_lineIndexBuffer = makeBuffer(WGPUBufferUsage_Index, lineIndices.data(), lineIndices.size() * sizeof(uint32_t));
     }
 
     void GraphicsContext::UpdateGeometry(const std::vector<Vertex>& vertices) {
@@ -581,9 +522,7 @@ namespace BimCore {
                                  vertices.data(), vertices.size() * sizeof(Vertex));
     }
 
-    void GraphicsContext::UpdateActiveIndices(const std::vector<uint32_t>& solidIdx,
-                                              const std::vector<uint32_t>& transparentIdx)
-    {
+    void GraphicsContext::UpdateActiveIndices(const std::vector<uint32_t>& solidIdx, const std::vector<uint32_t>& transparentIdx) {
         m_activeIndexCount = static_cast<uint32_t>(solidIdx.size());
         if (m_activeIndexBuffer && m_activeIndexCount > 0)
             wgpuQueueWriteBuffer(m_queue, m_activeIndexBuffer, 0,
@@ -614,14 +553,7 @@ namespace BimCore {
         CreateDepthTexture();
     }
 
-    // =============================================================================
-    // Scene-state setters
-    // =============================================================================
-
-    void GraphicsContext::SetHighlight(bool active,
-                                       const std::vector<HighlightRange>& ranges,
-                                       int style)
-    {
+    void GraphicsContext::SetHighlight(bool active, const std::vector<HighlightRange>& ranges, int style) {
         m_hasHighlight    = active;
         m_highlightRanges = ranges;
         m_highlightStyle  = style;
@@ -643,27 +575,23 @@ namespace BimCore {
         wgpuQueueWriteBuffer(m_queue, m_aabbVertexBuffer, 0, v, sizeof(v));
     }
 
-    void GraphicsContext::SetClippingPlanes(bool activeX, float x, const float* colX,
-                                            bool activeY, float y, const float* colY,
-                                            bool activeZ, float z, const float* colZ,
-                                            const glm::vec3& minB,
-                                            const glm::vec3& maxB)
+    void GraphicsContext::SetClippingPlanes(
+        bool actXMin, float xMin, bool actXMax, float xMax, const float* colX,
+        bool actYMin, float yMin, bool actYMax, float yMax, const float* colY,
+        bool actZMin, float zMin, bool actZMax, float zMax, const float* colZ,
+        const glm::vec3& minB, const glm::vec3& maxB)
     {
         std::vector<Vertex>   verts;
         std::vector<uint32_t> inds;
-        verts.reserve(12);
-        inds.reserve(18);
+        verts.reserve(24);
+        inds.reserve(36);
 
         const glm::vec3 minP = minB - glm::vec3(2.0f);
         const glm::vec3 maxP = maxB + glm::vec3(2.0f);
 
-        auto addPlane = [&](float px, float py, float pz,
-                            float nx, float ny, float nz,
-                            float cr, float cg, float cb)
-        {
+        auto addPlane = [&](float px, float py, float pz, float nx, float ny, float nz, float cr, float cg, float cb) {
             uint32_t i = static_cast<uint32_t>(verts.size());
-            Vertex v = {}; v.normal[0]=nx; v.normal[1]=ny; v.normal[2]=nz;
-            v.color[0]=cr; v.color[1]=cg; v.color[2]=cb;
+            Vertex v = {}; v.normal[0]=nx; v.normal[1]=ny; v.normal[2]=nz; v.color[0]=cr; v.color[1]=cg; v.color[2]=cb;
             if (nx != 0.0f) {
                 v.position[0]=px; v.position[1]=minP.y; v.position[2]=minP.z; verts.push_back(v);
                 v.position[0]=px; v.position[1]=maxP.y; v.position[2]=minP.z; verts.push_back(v);
@@ -683,9 +611,12 @@ namespace BimCore {
             inds.insert(inds.end(), {i, i+1, i+2, i, i+2, i+3});
         };
 
-        if (activeX) addPlane(x+0.001f, 0,       0,       1,0,0, colX[0], colX[1], colX[2]);
-        if (activeY) addPlane(0,       y+0.001f, 0,       0,1,0, colY[0], colY[1], colY[2]);
-        if (activeZ) addPlane(0,       0,       z+0.001f, 0,0,1, colZ[0], colZ[1], colZ[2]);
+        if (actXMin) addPlane(xMin+0.001f, 0, 0,  1,0,0, colX[0], colX[1], colX[2]);
+        if (actXMax) addPlane(xMax-0.001f, 0, 0, -1,0,0, colX[0], colX[1], colX[2]);
+        if (actYMin) addPlane(0, yMin+0.001f, 0,  0,1,0, colY[0], colY[1], colY[2]);
+        if (actYMax) addPlane(0, yMax-0.001f, 0,  0,-1,0, colY[0], colY[1], colY[2]);
+        if (actZMin) addPlane(0, 0, zMin+0.001f,  0,0,1, colZ[0], colZ[1], colZ[2]);
+        if (actZMax) addPlane(0, 0, zMax-0.001f,  0,0,-1, colZ[0], colZ[1], colZ[2]);
 
         m_glassIndexCount = static_cast<uint32_t>(inds.size());
         if (m_glassIndexCount > 0) {
@@ -693,10 +624,6 @@ namespace BimCore {
             wgpuQueueWriteBuffer(m_queue, m_glassIndexBuffer,  0, inds.data(),  inds.size()*sizeof(uint32_t));
         }
     }
-
-    // =============================================================================
-    // Render
-    // =============================================================================
 
     void GraphicsContext::RenderFrame() {
         WGPUSurfaceTexture surfTex = {};
@@ -710,7 +637,7 @@ namespace BimCore {
         colorAtt.view       = view;
         colorAtt.loadOp     = WGPULoadOp_Clear;
         colorAtt.storeOp    = WGPUStoreOp_Store;
-        colorAtt.clearValue = { 0.12, 0.14, 0.18, 1.0 };
+        colorAtt.clearValue = { 0.11f, 0.11f, 0.13f, 1.0f };
 
         WGPURenderPassDepthStencilAttachment depthAtt = {};
         depthAtt.view              = m_depthView;
@@ -726,7 +653,6 @@ namespace BimCore {
         WGPURenderPassEncoder rp = wgpuCommandEncoderBeginRenderPass(encoder, &rpDesc);
         wgpuRenderPassEncoderSetBindGroup(rp, 0, m_sceneBindGroup, 0, nullptr);
 
-        // 1. Opaque geometry
         if (m_vertexBuffer && m_activeIndexBuffer && m_activeIndexCount > 0) {
             wgpuRenderPassEncoderSetPipeline(rp, m_pipeline);
             wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_vertexBuffer, 0, WGPU_WHOLE_SIZE);
@@ -734,7 +660,6 @@ namespace BimCore {
             wgpuRenderPassEncoderDrawIndexed(rp, m_activeIndexCount, 1, 0, 0, 0);
         }
 
-        // 2. Transparent (IFC glass)
         if (m_vertexBuffer && m_activeTransparentIndexBuffer && m_activeTransparentIndexCount > 0) {
             wgpuRenderPassEncoderSetPipeline(rp, m_transparentPipeline);
             wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_vertexBuffer, 0, WGPU_WHOLE_SIZE);
@@ -742,19 +667,16 @@ namespace BimCore {
             wgpuRenderPassEncoderDrawIndexed(rp, m_activeTransparentIndexCount, 1, 0, 0, 0);
         }
 
-        // 3. Highlight overlay
         if (m_hasHighlight && !m_highlightRanges.empty() && m_vertexBuffer && m_indexBuffer) {
-            WGPURenderPipeline hlPipeline = (m_highlightStyle == 1)
-            ? m_highlightOutlinePipeline
-            : m_highlightSolidPipeline;
+            WGPURenderPipeline hlPipeline = (m_highlightStyle == 1) ? m_highlightOutlinePipeline : m_highlightSolidPipeline;
             wgpuRenderPassEncoderSetPipeline(rp, hlPipeline);
             wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_vertexBuffer, 0, WGPU_WHOLE_SIZE);
             wgpuRenderPassEncoderSetIndexBuffer(rp, m_indexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
-            for (const auto& range : m_highlightRanges)
+            for (const auto& range : m_highlightRanges) {
                 wgpuRenderPassEncoderDrawIndexed(rp, range.indexCount, 1, range.startIndex, 0, 0);
+            }
         }
 
-        // 4. AABB bounding box
         if (m_showAABB && m_aabbVertexBuffer && m_aabbIndexBuffer) {
             wgpuRenderPassEncoderSetPipeline(rp, m_aabbPipeline);
             wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_aabbVertexBuffer, 0, WGPU_WHOLE_SIZE);
@@ -762,7 +684,6 @@ namespace BimCore {
             wgpuRenderPassEncoderDrawIndexed(rp, 24, 1, 0, 0, 0);
         }
 
-        // 5. Glass clipping planes
         if (m_glassIndexCount > 0 && m_glassVertexBuffer && m_glassIndexBuffer) {
             wgpuRenderPassEncoderSetPipeline(rp, m_glassPipeline);
             wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_glassVertexBuffer, 0, WGPU_WHOLE_SIZE);
@@ -770,11 +691,9 @@ namespace BimCore {
             wgpuRenderPassEncoderDrawIndexed(rp, m_glassIndexCount, 1, 0, 0, 0);
         }
 
-        // 6. ImGui on top
         ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), rp);
 
         wgpuRenderPassEncoderEnd(rp);
-
         WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(encoder, nullptr);
         wgpuQueueSubmit(m_queue, 1, &cmd);
         wgpuSurfacePresent(m_surface);
@@ -785,16 +704,14 @@ namespace BimCore {
         wgpuTextureViewRelease(view);
     }
 
-    // =============================================================================
-    // ImGui integration
-    // =============================================================================
-
     void GraphicsContext::InitImGui(GLFWwindow* window) {
         BIM_LOG("UI", "Initialising Dear ImGui...");
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
-        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
+        // --- FIXED: Disabled UI Keyboard Navigation so arrow keys control the camera! ---
+        io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
 
         io.Fonts->AddFontDefault();
 
@@ -805,7 +722,6 @@ namespace BimCore {
         static const ImWchar iconRanges[] = { 0xe000, 0xf8ff, 0 };
         io.Fonts->AddFontFromFileTTF("fa-solid-900.ttf", 14.0f, &fontCfg, iconRanges);
 
-        ImGui::StyleColorsDark();
         ImGui_ImplGlfw_InitForOther(window, true);
 
         ImGui_ImplWGPU_InitInfo wgpuInfo = {};
@@ -816,6 +732,7 @@ namespace BimCore {
         ImGui_ImplWGPU_Init(&wgpuInfo);
     }
 
+    // ---> MAKE SURE THIS FUNCTION IS HERE! <---
     void GraphicsContext::ShutdownImGui() {
         ImGui_ImplWGPU_Shutdown();
         ImGui_ImplGlfw_Shutdown();

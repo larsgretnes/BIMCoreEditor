@@ -7,6 +7,7 @@
 #include <iostream>
 #include <algorithm>
 #include <thread>
+#include <fstream>
 
 #include "scene/IfcExporter.h"
 #include "platform/portable-file-dialogs.h"
@@ -42,24 +43,38 @@ namespace BimCore {
         m_graphics = std::make_unique<GraphicsContext>(m_window->GetNativeWindow(), m_config.WindowWidth, m_config.WindowHeight);
         m_graphics->InitImGui(m_window->GetNativeWindow());
 
-        ImGuiIO& io = ImGui::GetIO();
-        io.Fonts->AddFontDefault();
-        static const ImWchar icons_ranges[] = { 0xe000, 0xf8ff, 0 };
-        ImFontConfig icons_config;
-        icons_config.MergeMode = true;
-        icons_config.PixelSnapH = true;
-        io.Fonts->AddFontFromFileTTF("fa-solid-900.ttf", 14.0f, &icons_config, icons_ranges);
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.Colors[ImGuiCol_WindowBg]         = ImVec4(m_config.ThemeBg[0], m_config.ThemeBg[1], m_config.ThemeBg[2], m_config.ThemeBg[3]);
+        style.Colors[ImGuiCol_ChildBg]          = ImVec4(m_config.ThemePanel[0], m_config.ThemePanel[1], m_config.ThemePanel[2], m_config.ThemePanel[3]);
+
+        // --- FIXED: Lightened the Frame background so Checkboxes and Input texts are clearly visible ---
+        style.Colors[ImGuiCol_FrameBg]          = ImVec4(m_config.ThemePanel[0]*1.5f, m_config.ThemePanel[1]*1.5f, m_config.ThemePanel[2]*1.5f, 1.0f);
+        style.Colors[ImGuiCol_FrameBgHovered]   = ImVec4(m_config.ThemePanel[0]*2.0f, m_config.ThemePanel[1]*2.0f, m_config.ThemePanel[2]*2.0f, 1.0f);
+
+        style.Colors[ImGuiCol_Button]           = ImVec4(m_config.ThemePanel[0]*1.5f, m_config.ThemePanel[1]*1.5f, m_config.ThemePanel[2]*1.5f, 1.0f);
+        style.Colors[ImGuiCol_ButtonHovered]    = ImVec4(m_config.ThemeAccent[0]*0.8f, m_config.ThemeAccent[1]*0.8f, m_config.ThemeAccent[2]*0.8f, 1.0f);
+        style.Colors[ImGuiCol_ButtonActive]     = ImVec4(m_config.ThemeAccent[0], m_config.ThemeAccent[1], m_config.ThemeAccent[2], 1.0f);
+
+        style.Colors[ImGuiCol_CheckMark]        = ImVec4(m_config.ThemeAccent[0], m_config.ThemeAccent[1], m_config.ThemeAccent[2], 1.0f);
+
+        style.Colors[ImGuiCol_Header]           = ImVec4(m_config.ThemeAccent[0]*0.5f, m_config.ThemeAccent[1]*0.5f, m_config.ThemeAccent[2]*0.5f, 1.0f);
+        style.Colors[ImGuiCol_HeaderHovered]    = ImVec4(m_config.ThemeAccent[0]*0.7f, m_config.ThemeAccent[1]*0.7f, m_config.ThemeAccent[2]*0.7f, 1.0f);
+        style.Colors[ImGuiCol_HeaderActive]     = ImVec4(m_config.ThemeAccent[0], m_config.ThemeAccent[1], m_config.ThemeAccent[2], 1.0f);
+        style.Colors[ImGuiCol_Text]             = ImVec4(m_config.ThemeText[0], m_config.ThemeText[1], m_config.ThemeText[2], m_config.ThemeText[3]);
+        style.Colors[ImGuiCol_SliderGrab]       = ImVec4(m_config.ThemeAccent[0], m_config.ThemeAccent[1], m_config.ThemeAccent[2], 1.0f);
+        style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(m_config.ThemeAccent[0]*1.2f, m_config.ThemeAccent[1]*1.2f, m_config.ThemeAccent[2]*1.2f, 1.0f);
+        style.FrameRounding = 4.0f;
+        style.WindowRounding = 6.0f;
+        style.ChildRounding = 4.0f;
+        style.GrabRounding = 4.0f;
 
         m_camera = std::make_unique<Camera>((float)m_config.WindowWidth / (float)m_config.WindowHeight);
         m_uiSystem.state.loadState = &m_globalLoadState;
 
+        // --- FIXED: Autoloader no longer requires a strict relative ifstream check ---
         if (!m_config.AutoLoadPath.empty()) {
-            std::ifstream devFile(m_config.AutoLoadPath);
-            if (devFile.good()) {
-                devFile.close();
-                std::lock_guard<std::mutex> lock(m_loadMutex);
-                m_safePendingLoadPath = m_config.AutoLoadPath;
-            }
+            std::lock_guard<std::mutex> lock(m_loadMutex);
+            m_safePendingLoadPath = m_config.AutoLoadPath;
         }
 
         m_lastTime = glfwGetTime();
@@ -151,9 +166,9 @@ namespace BimCore {
                 m_uiSystem.state.updateGeometry = true;
                 m_uiSystem.state.selectionChanged = false;
 
-                m_uiSystem.state.clipX = geom.maxBounds[0] + 0.1f;
-                m_uiSystem.state.clipY = geom.maxBounds[1] + 0.1f;
-                m_uiSystem.state.clipZ = geom.maxBounds[2] + 0.1f;
+                m_uiSystem.state.clipXMin = geom.minBounds[0] - 0.1f; m_uiSystem.state.clipXMax = geom.maxBounds[0] + 0.1f;
+                m_uiSystem.state.clipYMin = geom.minBounds[1] - 0.1f; m_uiSystem.state.clipYMax = geom.maxBounds[1] + 0.1f;
+                m_uiSystem.state.clipZMin = geom.minBounds[2] - 0.1f; m_uiSystem.state.clipZMax = geom.maxBounds[2] + 0.1f;
 
                 memset(m_uiSystem.state.globalSearchBuf, 0, sizeof(m_uiSystem.state.globalSearchBuf));
                 memset(m_uiSystem.state.localSearchBuf, 0, sizeof(m_uiSystem.state.localSearchBuf));
@@ -217,7 +232,6 @@ namespace BimCore {
         m_input.Update(*m_window, *m_camera, m_document, m_uiSystem.state, m_config, deltaTime, m_currentLightMode, triggerFocus);
         m_camera->Update(deltaTime);
 
-        // --- NEW: Orbit around selection pivot ---
         if (m_uiSystem.state.selectionChanged) {
             m_uiSystem.state.selectionChanged = false;
             if (!m_uiSystem.state.objects.empty()) {
@@ -245,9 +259,12 @@ namespace BimCore {
         float oldSMinY = mesh.minBounds[1] - 0.1f; float oldSMaxY = mesh.maxBounds[1] + 0.1f;
         float oldSMinZ = mesh.minBounds[2] - 0.1f; float oldSMaxZ = mesh.maxBounds[2] + 0.1f;
 
-        float pctX = std::clamp((m_uiSystem.state.clipX - oldSMinX) / (oldSMaxX - oldSMinX), 0.0f, 1.0f);
-        float pctY = std::clamp((m_uiSystem.state.clipY - oldSMinY) / (oldSMaxY - oldSMinY), 0.0f, 1.0f);
-        float pctZ = std::clamp((m_uiSystem.state.clipZ - oldSMinZ) / (oldSMaxZ - oldSMinZ), 0.0f, 1.0f);
+        float pctXMin = std::clamp((m_uiSystem.state.clipXMin - oldSMinX) / (oldSMaxX - oldSMinX), 0.0f, 1.0f);
+        float pctXMax = std::clamp((m_uiSystem.state.clipXMax - oldSMinX) / (oldSMaxX - oldSMinX), 0.0f, 1.0f);
+        float pctYMin = std::clamp((m_uiSystem.state.clipYMin - oldSMinY) / (oldSMaxY - oldSMinY), 0.0f, 1.0f);
+        float pctYMax = std::clamp((m_uiSystem.state.clipYMax - oldSMinY) / (oldSMaxY - oldSMinY), 0.0f, 1.0f);
+        float pctZMin = std::clamp((m_uiSystem.state.clipZMin - oldSMinZ) / (oldSMaxZ - oldSMinZ), 0.0f, 1.0f);
+        float pctZMax = std::clamp((m_uiSystem.state.clipZMax - oldSMinZ) / (oldSMaxZ - oldSMinZ), 0.0f, 1.0f);
 
         mesh.vertices = mesh.originalVertices;
 
@@ -289,9 +306,12 @@ namespace BimCore {
         float newSMinY = mesh.minBounds[1] - 0.1f; float newSMaxY = mesh.maxBounds[1] + 0.1f;
         float newSMinZ = mesh.minBounds[2] - 0.1f; float newSMaxZ = mesh.maxBounds[2] + 0.1f;
 
-        m_uiSystem.state.clipX = newSMinX + pctX * (newSMaxX - newSMinX);
-        m_uiSystem.state.clipY = newSMinY + pctY * (newSMaxY - newSMinY);
-        m_uiSystem.state.clipZ = newSMinZ + pctZ * (newSMaxZ - newSMinZ);
+        m_uiSystem.state.clipXMin = newSMinX + pctXMin * (newSMaxX - newSMinX);
+        m_uiSystem.state.clipXMax = newSMinX + pctXMax * (newSMaxX - newSMinX);
+        m_uiSystem.state.clipYMin = newSMinY + pctYMin * (newSMaxY - newSMinY);
+        m_uiSystem.state.clipYMax = newSMinY + pctYMax * (newSMaxY - newSMinY);
+        m_uiSystem.state.clipZMin = newSMinZ + pctZMin * (newSMaxZ - newSMinZ);
+        m_uiSystem.state.clipZMax = newSMinZ + pctZMax * (newSMaxZ - newSMinZ);
 
         m_graphics->UpdateGeometry(mesh.vertices);
         m_uiSystem.state.updateGeometry = false;
@@ -311,7 +331,6 @@ namespace BimCore {
         }
         m_graphics->UpdateActiveIndices(solid, trans);
 
-        // --- NEW: Bounding Box Rendering ---
         if (m_uiSystem.state.showBoundingBox && !m_uiSystem.state.objects.empty()) {
             auto b = ComputeSelectionBounds(m_uiSystem.state.objects, m_document->GetGeometry());
             if (b.valid) m_graphics->SetBoundingBox(true, b.min, b.max);
@@ -328,9 +347,9 @@ namespace BimCore {
         }
 
         m_graphics->SetClippingPlanes(
-            m_uiSystem.state.showPlaneX, m_uiSystem.state.clipX, m_uiSystem.state.planeColorX,
-            m_uiSystem.state.showPlaneY, m_uiSystem.state.clipY, m_uiSystem.state.planeColorY,
-            m_uiSystem.state.showPlaneZ, m_uiSystem.state.clipZ, m_uiSystem.state.planeColorZ,
+            m_uiSystem.state.showPlaneXMin, m_uiSystem.state.clipXMin, m_uiSystem.state.showPlaneXMax, m_uiSystem.state.clipXMax, m_uiSystem.state.planeColorX,
+            m_uiSystem.state.showPlaneYMin, m_uiSystem.state.clipYMin, m_uiSystem.state.showPlaneYMax, m_uiSystem.state.clipYMax, m_uiSystem.state.planeColorY,
+            m_uiSystem.state.showPlaneZMin, m_uiSystem.state.clipZMin, m_uiSystem.state.showPlaneZMax, m_uiSystem.state.clipZMax, m_uiSystem.state.planeColorZ,
             glm::vec3(m_document->GetGeometry().minBounds[0], m_document->GetGeometry().minBounds[1], m_document->GetGeometry().minBounds[2]),
                                       glm::vec3(m_document->GetGeometry().maxBounds[0], m_document->GetGeometry().maxBounds[1], m_document->GetGeometry().maxBounds[2])
         );
@@ -340,12 +359,14 @@ namespace BimCore {
         scene.lightingMode = m_currentLightMode;
         scene.highlightColor = m_uiSystem.state.color;
 
-        scene.clipActive.x = 1.0f;
-        scene.clipActive.y = 1.0f;
-        scene.clipActive.z = 1.0f;
-        scene.clipDistances.x = m_uiSystem.state.clipX;
-        scene.clipDistances.y = m_uiSystem.state.clipY;
-        scene.clipDistances.z = m_uiSystem.state.clipZ;
+        // --- FIXED: The shader ALWAYS clips the math based on the sliders ---
+        // The checkboxes in the UI only control whether the colored glass plane is drawn.
+        scene.clipActiveMin = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+        scene.clipActiveMax = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+
+        scene.clipMin.x = m_uiSystem.state.clipXMin; scene.clipMax.x = m_uiSystem.state.clipXMax;
+        scene.clipMin.y = m_uiSystem.state.clipYMin; scene.clipMax.y = m_uiSystem.state.clipYMax;
+        scene.clipMin.z = m_uiSystem.state.clipZMin; scene.clipMax.z = m_uiSystem.state.clipZMax;
 
         m_graphics->UpdateScene(scene);
         m_graphics->RenderFrame();

@@ -4,6 +4,7 @@
 #include "InputController.h"
 #include <imgui.h>
 #include <GLFW/glfw3.h>
+#include "Core.h"
 
 namespace BimCore {
 
@@ -75,9 +76,6 @@ namespace BimCore {
             }
             m_delWasDown = delNow;
 
-            // =================================================================
-            // DECOUPLED KEYBOARD MOVEMENT (ALWAYS ACTIVE)
-            // =================================================================
             glm::vec3 moveDir(0.0f);
             if (window.IsKeyPressed(config.KeyForward))  moveDir.z += 1.0f;
             if (window.IsKeyPressed(config.KeyBackward)) moveDir.z -= 1.0f;
@@ -95,12 +93,11 @@ namespace BimCore {
         double mx, my;
         window.GetMousePosition(mx, my);
 
-        float deltaX = static_cast<float>(mx - m_lastMouseX) * config.MouseSensitivityX;
-        float deltaY = static_cast<float>(my - m_lastMouseY) * config.MouseSensitivityY;
+        float rawDeltaX = static_cast<float>(mx - m_lastMouseX);
+        float rawDeltaY = static_cast<float>(my - m_lastMouseY);
         m_lastMouseX = mx;
         m_lastMouseY = my;
 
-        // Sync zoom speed and process scroll wheel
         camera.SetZoomSpeed(config.ZoomSpeed);
         float scroll = (float)window.ConsumeScrollDelta();
 
@@ -110,6 +107,16 @@ namespace BimCore {
         }
 
         if (m_navMode == NavigationMode::CAD) {
+
+            if (!uiTyping && !uiHovered) {
+                // --- FIXED: Increased arrow key steering speed by 5x (from 100 to 500) ---
+                float keyboardOrbitSpeed = 500.0f * deltaTime;
+                if (window.IsKeyPressed(GLFW_KEY_UP))    camera.ProcessOrbit(0.0f, keyboardOrbitSpeed);
+                if (window.IsKeyPressed(GLFW_KEY_DOWN))  camera.ProcessOrbit(0.0f, -keyboardOrbitSpeed);
+                if (window.IsKeyPressed(GLFW_KEY_LEFT))  camera.ProcessOrbit(-keyboardOrbitSpeed, 0.0f);
+                if (window.IsKeyPressed(GLFW_KEY_RIGHT)) camera.ProcessOrbit(keyboardOrbitSpeed, 0.0f);
+            }
+
             if (!uiHovered) {
                 bool leftClickPan   = (selection.activeTool == InteractionTool::Pan) && window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
                 bool leftClickOrbit = (selection.activeTool == InteractionTool::Orbit) && window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
@@ -117,8 +124,11 @@ namespace BimCore {
                 bool mmbOrbit = window.IsMouseButtonPressed(config.CadPanButton) && window.IsKeyPressed(config.CadOrbitModifier);
                 bool rmbOrbit = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT);
 
-                if (leftClickPan || mmbPan) camera.ProcessPan(deltaX, -deltaY);
-                else if (leftClickOrbit || mmbOrbit || rmbOrbit) camera.ProcessOrbit(deltaX, -deltaY);
+                if (leftClickPan || mmbPan) {
+                    camera.ProcessPan(rawDeltaX * config.MouseSensitivityX * 250.0f, -rawDeltaY * config.MouseSensitivityY * 250.0f);
+                } else if (leftClickOrbit || mmbOrbit || rmbOrbit) {
+                    camera.ProcessOrbit(rawDeltaX * config.MouseSensitivityX * 250.0f, -rawDeltaY * config.MouseSensitivityY * 250.0f);
+                }
             }
 
             if (selection.activeTool == InteractionTool::Select && !uiHovered) {
@@ -126,7 +136,7 @@ namespace BimCore {
             }
 
         } else {
-            camera.ProcessMouseMovement(deltaX, -deltaY);
+            camera.ProcessMouseMovement(rawDeltaX * config.MouseSensitivityX * 5.0f, -rawDeltaY * config.MouseSensitivityY * 5.0f);
         }
     }
 
@@ -137,14 +147,18 @@ namespace BimCore {
             window.GetMousePosition(mx, my);
             Ray ray = ScreenToWorldRay(mx, my, window.GetWidth(), window.GetHeight(), camera.GetViewMatrix(), camera.GetProjectionMatrix(), camera.GetPosition());
 
-            float cx = selection.showPlaneX ? selection.clipX : kFloatMax;
-            float cy = selection.showPlaneY ? selection.clipY : kFloatMax;
-            float cz = selection.showPlaneZ ? selection.clipZ : kFloatMax;
+            float cXMin = selection.clipXMin;
+            float cXMax = selection.clipXMax;
+            float cYMin = selection.clipYMin;
+            float cYMax = selection.clipYMax;
+            float cZMin = selection.clipZMin;
+            float cZMax = selection.clipZMax;
 
-            HitResult hit = Raycaster::CastRay(ray, document->GetGeometry(), cx, cy, cz, selection.hiddenObjects);
+            HitResult hit = Raycaster::CastRay(ray, document->GetGeometry(), cXMin, cXMax, cYMin, cYMax, cZMin, cZMax, selection.hiddenObjects);
+
+            bool isCtrlPressed = window.IsKeyPressed(GLFW_KEY_LEFT_CONTROL) || window.IsKeyPressed(GLFW_KEY_RIGHT_CONTROL);
 
             if (hit.hit) {
-                bool isCtrlPressed = window.IsKeyPressed(config.KeyMultiSelect);
                 if (!isCtrlPressed) selection.objects.clear();
 
                 auto it = std::find_if(selection.objects.begin(), selection.objects.end(),
@@ -161,9 +175,9 @@ namespace BimCore {
                     so.properties = document->GetElementProperties(so.guid);
                     selection.objects.push_back(so);
                 }
-                selection.selectionChanged = true; // --- NEW: Snap Camera Pivot! ---
+                selection.selectionChanged = true;
             } else {
-                if (!window.IsKeyPressed(config.KeyMultiSelect)) {
+                if (!isCtrlPressed) {
                     selection.objects.clear();
                     selection.selectionChanged = true;
                 }

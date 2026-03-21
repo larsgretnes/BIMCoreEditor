@@ -143,6 +143,7 @@ add_executable(BIMCoreEditor
     apps/editor/EditorApp.cpp
     apps/editor/AppUI.cpp
     apps/editor/InputController.cpp
+    apps/editor/EngineConfig.cpp
     apps/editor/ui/UIStatusOverlay.cpp
     apps/editor/ui/UIMainPanel.cpp
     apps/editor/ui/UIPropertiesPanel.cpp

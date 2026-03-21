@@ -23,9 +23,9 @@ namespace BimCore {
         ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, viewport->WorkPos.y + 20.0f), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
         ImGui::SetNextWindowBgAlpha(0.65f);
         ImGui::Begin("FlyModeOverlay", nullptr,
-            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
-            ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove);
+                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove);
 
         ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), ICON_FA_ARROWS_ALT "  FLY MODE ACTIVE");
         ImGui::Text("Press F1 to unlock cursor");
@@ -34,7 +34,7 @@ namespace BimCore {
 
     void UIStatusOverlay::RenderStatusPanel(SelectionState& state, std::shared_ptr<BimDocument> document) {
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        const float statsPanelHeight = 150.0f;
+        const float statsPanelHeight = 75.0f; // --- FIXED: Halved the height ---
         const float mainPanelHeight = viewport->WorkSize.y - statsPanelHeight;
 
         ImGuiContext* g = ImGui::GetCurrentContext();
@@ -52,11 +52,13 @@ namespace BimCore {
             ImGui::Separator();
         }
 
-        ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+        // --- FIXED: Display FPS as a whole number ---
+        ImGui::Text("FPS: %.0f", ImGui::GetIO().Framerate);
         if (document) {
-            ImGui::Text("Elements: %zu", document->GetGeometry().subMeshes.size());
-            ImGui::Text("Vertices: %zu", document->GetGeometry().vertices.size());
-            ImGui::Text("Selected: %zu", state.objects.size());
+            ImGui::Text("Elements: %zu  |  Vertices: %zu  |  Selected: %zu",
+                        document->GetGeometry().subMeshes.size(),
+                        document->GetGeometry().vertices.size(),
+                        state.objects.size());
         }
         ImGui::End();
     }

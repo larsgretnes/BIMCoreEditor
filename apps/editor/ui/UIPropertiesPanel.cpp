@@ -65,7 +65,6 @@ namespace BimCore {
         bool deleteAll = false;
         ImVec2 sqBtn(ImGui::GetFrameHeight(), ImGui::GetFrameHeight());
 
-        // --- GLOBAL ACTIONS ROW (Centered & Colored) ---
         if (state.objects.size() > 1) {
             bool anyVisible = false;
             for (const auto& obj : state.objects) {
@@ -173,6 +172,17 @@ namespace BimCore {
                     if (ImGui::Button("Delete Entity")) objToDeleteEntirely = obj.guid;
 
                     DrawPropertyTable(state, obj, document, locFilter, sqBtn, objNeedsRefresh, propToDelete);
+
+                    // --- FIXED: If we modified a property, we instantly refresh the cache so the UI updates ---
+                    if (objNeedsRefresh) {
+                        obj.properties = document->GetElementProperties(obj.guid);
+                        if (obj.properties.count("Name") && !obj.properties["Name"].value.empty()) {
+                            state.cachedNames[obj.guid] = obj.properties["Name"].value;
+                        } else {
+                            state.cachedNames[obj.guid] = obj.type;
+                        }
+                    }
+
                     ImGui::TreePop();
                 }
             }

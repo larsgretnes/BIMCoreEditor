@@ -19,11 +19,7 @@
 
 namespace BimCore {
 
-    enum class InteractionTool {
-        Select,
-        Pan,
-        Orbit
-    };
+    enum class InteractionTool { Select, Pan, Orbit };
 
     struct SelectedObject {
         std::string                         guid;
@@ -60,13 +56,14 @@ namespace BimCore {
         float                           explodeFactor      = 0.0f;
         bool                            updateGeometry     = false;
 
-        // --- Clipping States ---
-        bool                            showPlaneX         = false;
-        bool                            showPlaneY         = false;
-        bool                            showPlaneZ         = false;
-        float                           clipX              = 0.0f;
-        float                           clipY              = 0.0f;
-        float                           clipZ              = 0.0f;
+        // --- NEW: 6 Clipping States ---
+        bool                            showPlaneXMin = false, showPlaneXMax = false;
+        bool                            showPlaneYMin = false, showPlaneYMax = false;
+        bool                            showPlaneZMin = false, showPlaneZMax = false;
+
+        float                           clipXMin = 0.0f, clipXMax = 0.0f;
+        float                           clipYMin = 0.0f, clipYMax = 0.0f;
+        float                           clipZMin = 0.0f, clipZMax = 0.0f;
 
         float                           planeColorX[3]     = { 1.0f, 0.2f, 0.2f };
         float                           planeColorY[3]     = { 0.2f, 1.0f, 0.2f };
@@ -80,7 +77,6 @@ namespace BimCore {
         char                            editBuffer[256]    = "";
         bool                            focusEditField     = false;
 
-        // --- Search & Grouping State ---
         char                            globalSearchBuf[256] = "";
         char                            localSearchBuf[256]  = "";
 
@@ -92,12 +88,11 @@ namespace BimCore {
         std::map<std::string, std::vector<uint32_t>> cachedGroups;
         std::map<std::string, std::string>           cachedNames;
         bool                                         groupsBuilt = false;
+        bool                                         selectionChanged = false;
+        bool                                         showBoundingBox = false;
 
-        // --- Shift-Selection Trackers ---
         int                                          lastClickedVisualIndex = -1;
         std::string                                  lastClickedGroup       = "";
-        bool selectionChanged  = false;
-        bool showBoundingBox   = false;
     };
 
 } // namespace BimCore

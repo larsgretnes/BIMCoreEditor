@@ -36,7 +36,7 @@ namespace BimCore {
     }
 
     HitResult Raycaster::CastRay(const Ray& ray, const RenderMesh& mesh,
-                                 float clipX, float clipY, float clipZ,
+                                 float cXMin, float cXMax, float cYMin, float cYMax, float cZMin, float cZMax,
                                  const std::unordered_set<std::string>& hidden)
     {
         HitResult best;
@@ -50,22 +50,22 @@ namespace BimCore {
                 const float* v1 = mesh.vertices[mesh.indices[i+1]].position;
                 const float* v2 = mesh.vertices[mesh.indices[i+2]].position;
 
-                // Broad-phase rejection: if ALL vertices are clipped, skip the triangle entirely
-                if (v0[0] > clipX && v1[0] > clipX && v2[0] > clipX) continue;
-                if (v0[1] > clipY && v1[1] > clipY && v2[1] > clipY) continue;
-                if (v0[2] > clipZ && v1[2] > clipZ && v2[2] > clipZ) continue;
+                // Broad-phase rejection for all 6 planes
+                if (v0[0] > cXMax && v1[0] > cXMax && v2[0] > cXMax) continue;
+                if (v0[0] < cXMin && v1[0] < cXMin && v2[0] < cXMin) continue;
+                if (v0[1] > cYMax && v1[1] > cYMax && v2[1] > cYMax) continue;
+                if (v0[1] < cYMin && v1[1] < cYMin && v2[1] < cYMin) continue;
+                if (v0[2] > cZMax && v1[2] > cZMax && v2[2] > cZMax) continue;
+                if (v0[2] < cZMin && v1[2] < cZMin && v2[2] < cZMin) continue;
 
                 float t = 0.0f;
                 if (RayTriangle(ray.origin, ray.direction, v0, v1, v2, t) && t < best.distance) {
 
-                    // --- NEW: Exact Intersection Point Clipping ---
-                    // Calculate the exact 3D coordinate where the ray hit the triangle
-                    float hitX = ray.origin[0] + ray.direction[0] * t;
-                    float hitY = ray.origin[1] + ray.direction[1] * t;
-                    float hitZ = ray.origin[2] + ray.direction[2] * t;
+                    float hX = ray.origin[0] + ray.direction[0] * t;
+                    float hY = ray.origin[1] + ray.direction[1] * t;
+                    float hZ = ray.origin[2] + ray.direction[2] * t;
 
-                    // If the exact hit point is beyond the active clipping plane, ignore it!
-                    if (hitX > clipX || hitY > clipY || hitZ > clipZ) {
+                    if (hX > cXMax || hX < cXMin || hY > cYMax || hY < cYMin || hZ > cZMax || hZ < cZMin) {
                         continue;
                     }
 
@@ -80,5 +80,4 @@ namespace BimCore {
         }
         return best;
     }
-
 } // namespace BimCore

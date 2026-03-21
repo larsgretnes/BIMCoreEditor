@@ -27,14 +27,11 @@ struct HitResult {
 class Raycaster {
 public:
     // hiddenGuids uses unordered_set — O(1) lookup instead of O(n) per triangle
-    static HitResult CastRay(
-        const Ray&                        ray,
-        const RenderMesh&                 mesh,
-        float                             clipX       = kFloatMax,
-        float                             clipY       = kFloatMax,
-        float                             clipZ       = kFloatMax,
-        const std::unordered_set<std::string>& hidden = {}
-    );
+    static HitResult CastRay(const Ray& ray, const RenderMesh& mesh,
+                             float clipXMin, float clipXMax,
+                             float clipYMin, float clipYMax,
+                             float clipZMin, float clipZMax,
+                             const std::unordered_set<std::string>& hiddenObjects);
 };
 
 } // namespace BimCore

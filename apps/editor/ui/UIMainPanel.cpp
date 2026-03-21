@@ -35,7 +35,7 @@ namespace BimCore {
 
     void UIMainPanel::Render(SelectionState& state, std::shared_ptr<BimDocument> document, float configMaxExplode, bool& triggerFocus) {
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        const float statsPanelHeight = 150.0f;
+        const float statsPanelHeight = 75.0f;
         const float mainPanelHeight = viewport->WorkSize.y - statsPanelHeight;
 
         ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x, viewport->WorkPos.y), ImGuiCond_Always);
@@ -44,9 +44,8 @@ namespace BimCore {
 
         ImGui::Begin("Main Menu", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove);
 
-        // --- Top Menu Tools ---
-        ImGui::SetWindowFontScale(1.5f);
-        float bigBtnDim = ImGui::GetFrameHeight();
+        ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.5f, 0.55f));
+        float bigBtnDim = ImGui::GetFrameHeight() * 1.5f;
         ImVec2 bigBtnSize(bigBtnDim, bigBtnDim);
 
         if (ImGui::Button(ICON_FA_FOLDER_OPEN, bigBtnSize)) state.triggerLoad = true;
@@ -63,9 +62,10 @@ namespace BimCore {
         else ImGui::SameLine();
 
         auto drawToolBtn = [&](InteractionTool tool, const char* icon, const char* id) {
-            if (state.activeTool == tool) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            bool isToolActive = (state.activeTool == tool);
+            if (isToolActive) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
             if (ImGui::Button(icon, bigBtnSize)) state.activeTool = tool;
-            if (state.activeTool == tool) ImGui::PopStyleColor();
+            if (isToolActive) ImGui::PopStyleColor();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", id);
         };
 
@@ -73,7 +73,6 @@ namespace BimCore {
             drawToolBtn(InteractionTool::Pan, ICON_FA_ARROWS_ALT, "Pan (2)"); ImGui::SameLine();
             drawToolBtn(InteractionTool::Orbit, ICON_FA_SYNC, "Orbit (3)");
 
-            // --- Row 2: Secondary Tool Toggles ---
             ImGui::Spacing();
             if (ImGui::Button(ICON_FA_TIMES_CIRCLE, bigBtnSize)) {
                 state.objects.clear();
@@ -91,20 +90,24 @@ namespace BimCore {
         if (cursorX > ImGui::GetCursorPosX()) ImGui::SameLine(cursorX);
         else ImGui::SameLine();
 
-        if (state.style == 1) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-        if (ImGui::Button(ICON_FA_CUBE, bigBtnSize)) state.style = (state.style == 0) ? 1 : 0;
-        if (state.style == 1) ImGui::PopStyleColor();
+        // --- FIXED: ImGui Push/Pop stack logic ---
+        bool isStyleSolid = (state.style == 1);
+        if (isStyleSolid) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        if (ImGui::Button(ICON_FA_CUBE, bigBtnSize)) state.style = isStyleSolid ? 0 : 1;
+        if (isStyleSolid) ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Selection Style (Solid/Outline)");
 
         ImGui::SameLine();
-        if (state.showBoundingBox) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-        if (ImGui::Button(ICON_FA_VECTOR_SQUARE, bigBtnSize)) state.showBoundingBox = !state.showBoundingBox;
-        if (state.showBoundingBox) ImGui::PopStyleColor();
+
+        // --- FIXED: ImGui Push/Pop stack logic ---
+        bool isShowBBox = state.showBoundingBox;
+        if (isShowBBox) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        if (ImGui::Button(ICON_FA_VECTOR_SQUARE, bigBtnSize)) state.showBoundingBox = !isShowBBox;
+        if (isShowBBox) ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Selection Bounding Box");
 
         ImGui::SameLine();
 
-        // --- FIXED: Explicitly convert glm::vec4 to ImVec4 ---
         ImVec4 imColor(state.color.x, state.color.y, state.color.z, state.color.w);
         if (ImGui::ColorButton("##selcolorbtn", imColor, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoAlpha, bigBtnSize)) {
             ImGui::OpenPopup("ColorPickerPopup");
@@ -114,12 +117,10 @@ namespace BimCore {
             ImGui::EndPopup();
         }
 
-        ImGui::SetWindowFontScale(1.0f);
-
+        ImGui::PopStyleVar();
         DrawResetModal(state, document);
         ImGui::Separator();
 
-        // --- Explode Slider ---
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.25f, 0.30f, 0.35f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.30f, 0.35f, 0.40f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.35f, 0.40f, 0.45f, 1.0f));
@@ -132,7 +133,6 @@ namespace BimCore {
             if (ImGui::IsItemActive()) state.updateGeometry = true;
         }
 
-        // --- Clipping Planes ---
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.25f, 0.30f, 0.35f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.30f, 0.35f, 0.40f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.35f, 0.40f, 0.45f, 1.0f));
@@ -150,24 +150,27 @@ namespace BimCore {
                 bMinZ = document->GetGeometry().minBounds[2] - 0.1f; bMaxZ = document->GetGeometry().maxBounds[2] + 0.1f;
             }
 
-            auto drawClipRow = [](const char* axis, bool& show, float& val, float minB, float maxB, float* col) {
+            auto drawClipRow = [](const char* axis, bool& showMin, float& valMin, bool& showMax, float& valMax, float minB, float maxB, float* col) {
                 ImGui::PushID(axis);
-                ImGui::Checkbox("##show", &show);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Glass Plane Visibility");
-                ImGui::SameLine();
-                float colorBtnW = ImGui::GetFrameHeight();
-                float spc = ImGui::GetStyle().ItemSpacing.x;
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - colorBtnW - spc);
-                std::string format = std::string(axis) + ": %.2f";
-                ImGui::SliderFloat("##val", &val, minB, maxB, format.c_str());
-                ImGui::SameLine();
+                ImGui::Text("%s Axis", axis);
+                ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - ImGui::GetFrameHeight());
                 ImGui::ColorEdit3("##col", col, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
+
+                ImGui::Checkbox("Min", &showMin); ImGui::SameLine();
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                ImGui::SliderFloat("##vmin", &valMin, minB, valMax, "%.2f");
+
+                ImGui::Checkbox("Max", &showMax); ImGui::SameLine();
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                ImGui::SliderFloat("##vmax", &valMax, valMin, maxB, "%.2f");
+
+                ImGui::Separator();
                 ImGui::PopID();
             };
 
-            drawClipRow("X", state.showPlaneX, state.clipX, bMinX, bMaxX, state.planeColorX);
-            drawClipRow("Y", state.showPlaneY, state.clipY, bMinY, bMaxY, state.planeColorY);
-            drawClipRow("Z", state.showPlaneZ, state.clipZ, bMinZ, bMaxZ, state.planeColorZ);
+            drawClipRow("X", state.showPlaneXMin, state.clipXMin, state.showPlaneXMax, state.clipXMax, bMinX, bMaxX, state.planeColorX);
+            drawClipRow("Y", state.showPlaneYMin, state.clipYMin, state.showPlaneYMax, state.clipYMax, bMinY, bMaxY, state.planeColorY);
+            drawClipRow("Z", state.showPlaneZMin, state.clipZMin, state.showPlaneZMax, state.clipZMax, bMinZ, bMaxZ, state.planeColorZ);
         }
         ImGui::Separator();
 
@@ -239,8 +242,8 @@ namespace BimCore {
         }
 
         ImGui::Spacing();
-        ImGui::TextDisabled("Model Tree View");
         ImGui::Separator();
+        ImGui::TextDisabled("Model Tree View");
         ImGui::BeginChild("ModelTree", ImVec2(0, 0), true);
 
         ImVec2 sqBtn(ImGui::GetFrameHeight(), ImGui::GetFrameHeight());
@@ -465,9 +468,12 @@ namespace BimCore {
                     for (auto& [guid, props] : state.originalProperties) {
                         for (auto& [k, v] : props) document->UpdateElementProperty(guid, k, v);
                     }
-                    state.clipX = document->GetGeometry().maxBounds[0] + 0.1f;
-                    state.clipY = document->GetGeometry().maxBounds[1] + 0.1f;
-                    state.clipZ = document->GetGeometry().maxBounds[2] + 0.1f;
+                    state.clipXMin = document->GetGeometry().minBounds[0] - 0.1f;
+                    state.clipXMax = document->GetGeometry().maxBounds[0] + 0.1f;
+                    state.clipYMin = document->GetGeometry().minBounds[1] - 0.1f;
+                    state.clipYMax = document->GetGeometry().maxBounds[1] + 0.1f;
+                    state.clipZMin = document->GetGeometry().minBounds[2] - 0.1f;
+                    state.clipZMax = document->GetGeometry().maxBounds[2] + 0.1f;
                 }
 
                 state.explodeFactor = 0.0f;
