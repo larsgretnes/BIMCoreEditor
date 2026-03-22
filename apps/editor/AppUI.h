@@ -7,9 +7,10 @@
 #include "ui/UIMainPanel.h"
 #include "ui/UIPropertiesPanel.h"
 
-// --- NEW: Restore the missing includes for the Render signature! ---
 #include "scene/Camera.h"
 #include "graphics/GraphicsContext.h"
+#include <vector>
+#include <memory>
 
 namespace BimCore {
 
@@ -20,11 +21,12 @@ namespace BimCore {
         void NewFrame();
         void Render(SelectionState&              selection,
                     GraphicsContext&             graphics,
-                    std::shared_ptr<BimDocument> document,
+                    std::vector<std::shared_ptr<BimDocument>>& documents,
                     Camera&                      camera,
                     float                        configMaxExplode,
                     bool&                        triggerFocus,
-                    bool                         isFlightMode);
+                    bool                         isFlightMode,
+                    bool&                        triggerRebuild);
 
     private:
         UIStatusOverlay   m_overlay;

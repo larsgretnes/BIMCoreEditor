@@ -1,7 +1,8 @@
-#pragma once
 // =============================================================================
 // BimCore/scene/BimDocument.h
 // =============================================================================
+#pragma once
+
 #include <string>
 #include <vector>
 #include <map>
@@ -35,7 +36,10 @@ namespace BimCore {
         uint32_t    indexCount  = 0;
         float       center[3]   = {};
         bool        isTransparent = false;
-        int         textureIndex = -1; // -1 = Default White Texture
+        int         textureIndex = -1;
+
+        uint32_t    globalStartIndex = 0;
+        int         globalTextureIndex = -1;
     };
 
     struct RenderMesh {
@@ -77,6 +81,8 @@ namespace BimCore {
 
         bool CommitASTChanges();
 
+        void ApplyTransform(const glm::mat4& matrix);
+
         void SetHierarchy(const std::unordered_map<std::string, std::string>& childToParent,
                           const std::unordered_map<std::string, std::vector<std::string>>& parentToChildren) {
             m_childToParent = childToParent;
@@ -97,6 +103,10 @@ namespace BimCore {
                               return m_parentToChildren.find(guid) != m_parentToChildren.end();
                           }
 
+                          // --- NEW: Toggle the entire document's visibility instantly ---
+                          bool IsHidden() const { return m_isHidden; }
+                          void SetHidden(bool hidden) { m_isHidden = hidden; }
+
     private:
         void LoadPropertiesFromAST(const std::string& guid);
 
@@ -106,6 +116,8 @@ namespace BimCore {
         std::map<std::string, std::map<std::string, PropertyInfo>>      m_propertyCache;
         std::unordered_map<std::string, std::string>              m_childToParent;
         std::unordered_map<std::string, std::vector<std::string>> m_parentToChildren;
+
+        bool m_isHidden = false;
     };
 
 } // namespace BimCore

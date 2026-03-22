@@ -16,7 +16,7 @@ namespace BimCore {
     void InputController::Update(
         Window&                      window,
         Camera&                      camera,
-        std::shared_ptr<BimDocument> document,
+        std::vector<std::shared_ptr<BimDocument>>& documents,
         SelectionState&              selection,
         const EngineConfig&          config,
         float                        deltaTime,
@@ -35,7 +35,6 @@ namespace BimCore {
             if (window.IsKeyPressed(config.KeyToolPan))    selection.activeTool = InteractionTool::Pan;
             if (window.IsKeyPressed(config.KeyToolOrbit))  selection.activeTool = InteractionTool::Orbit;
 
-            // --- FIXED: Measure tool is now an independent toggle via the 'M' key ---
             static bool mWasDown = false;
             bool mNow = window.IsKeyPressed(config.KeyToolMeasure);
             if (mNow && !mWasDown) {
@@ -143,29 +142,39 @@ namespace BimCore {
                 }
             }
 
-            if (selection.measureToolActive && !uiHovered) {
+            if (selection.measureToolActive && !uiHovered && !documents.empty()) {
                 Ray ray = ScreenToWorldRay(mx, my, window.GetWidth(), window.GetHeight(), camera.GetViewMatrix(), camera.GetProjectionMatrix(), camera.GetPosition());
-                HitResult hit = Raycaster::CastRay(ray, document->GetGeometry(), selection.clipXMin, selection.clipXMax, selection.clipYMin, selection.clipYMax, selection.clipZMin, selection.clipZMax, selection.hiddenObjects, !selection.showOpeningsAndSpaces);
 
-                selection.isHoveringGeometry = hit.hit;
-                if (hit.hit) {
+                HitResult closestHit;
+                closestHit.distance = 1e9f;
+
+                for (auto& doc : documents) {
+                    if (doc->IsHidden()) continue; // --- FIXED: Don't raycast hidden models ---
+                    HitResult hit = Raycaster::CastRay(ray, doc->GetGeometry(), selection.clipXMin, selection.clipXMax, selection.clipYMin, selection.clipYMax, selection.clipZMin, selection.clipZMax, selection.hiddenObjects, !selection.showOpeningsAndSpaces);
+                    if (hit.hit && hit.distance < closestHit.distance) {
+                        closestHit = hit;
+                    }
+                }
+
+                selection.isHoveringGeometry = closestHit.hit;
+                if (closestHit.hit) {
                     bool altPressed = window.IsKeyPressed(GLFW_KEY_LEFT_ALT);
                     if (altPressed) {
                         selection.currentSnapType = SnapType::Face;
-                        selection.currentSnapPoint = hit.hitPoint;
+                        selection.currentSnapPoint = closestHit.hitPoint;
                     } else {
-                        float threshold = hit.distance * 0.02f;
+                        float threshold = closestHit.distance * 0.02f;
 
-                        float d0 = glm::length(hit.hitPoint - hit.hitV0);
-                        float d1 = glm::length(hit.hitPoint - hit.hitV1);
-                        float d2 = glm::length(hit.hitPoint - hit.hitV2);
+                        float d0 = glm::length(closestHit.hitPoint - closestHit.hitV0);
+                        float d1 = glm::length(closestHit.hitPoint - closestHit.hitV1);
+                        float d2 = glm::length(closestHit.hitPoint - closestHit.hitV2);
 
                         float minDist = std::min({d0, d1, d2});
                         if (minDist < threshold) {
                             selection.currentSnapType = SnapType::Vertex;
-                            if (minDist == d0) selection.currentSnapPoint = hit.hitV0;
-                            else if (minDist == d1) selection.currentSnapPoint = hit.hitV1;
-                            else selection.currentSnapPoint = hit.hitV2;
+                            if (minDist == d0) selection.currentSnapPoint = closestHit.hitV0;
+                            else if (minDist == d1) selection.currentSnapPoint = closestHit.hitV1;
+                            else selection.currentSnapPoint = closestHit.hitV2;
                         } else {
                             auto closestOnLine = [](const glm::vec3& p, const glm::vec3& a, const glm::vec3& b) {
                                 glm::vec3 ab = b - a;
@@ -173,23 +182,23 @@ namespace BimCore {
                                 return a + t * ab;
                             };
 
-                            glm::vec3 e0 = closestOnLine(hit.hitPoint, hit.hitV0, hit.hitV1);
-                            glm::vec3 e1 = closestOnLine(hit.hitPoint, hit.hitV1, hit.hitV2);
-                            glm::vec3 e2 = closestOnLine(hit.hitPoint, hit.hitV2, hit.hitV0);
+                            glm::vec3 e0 = closestOnLine(closestHit.hitPoint, closestHit.hitV0, closestHit.hitV1);
+                            glm::vec3 e1 = closestOnLine(closestHit.hitPoint, closestHit.hitV1, closestHit.hitV2);
+                            glm::vec3 e2 = closestOnLine(closestHit.hitPoint, closestHit.hitV2, closestHit.hitV0);
 
-                            float ed0 = glm::length(hit.hitPoint - e0);
-                            float ed1 = glm::length(hit.hitPoint - e1);
-                            float ed2 = glm::length(hit.hitPoint - e2);
+                            float ed0 = glm::length(closestHit.hitPoint - e0);
+                            float ed1 = glm::length(closestHit.hitPoint - e1);
+                            float ed2 = glm::length(closestHit.hitPoint - e2);
 
                             float minEd = std::min({ed0, ed1, ed2});
                             if (minEd < threshold) {
                                 selection.currentSnapType = SnapType::Edge;
-                                if (minEd == ed0) { selection.currentSnapPoint = e0; selection.currentSnapEdgeV0 = hit.hitV0; selection.currentSnapEdgeV1 = hit.hitV1; }
-                                else if (minEd == ed1) { selection.currentSnapPoint = e1; selection.currentSnapEdgeV0 = hit.hitV1; selection.currentSnapEdgeV1 = hit.hitV2; }
-                                else { selection.currentSnapPoint = e2; selection.currentSnapEdgeV0 = hit.hitV2; selection.currentSnapEdgeV1 = hit.hitV0; }
+                                if (minEd == ed0) { selection.currentSnapPoint = e0; selection.currentSnapEdgeV0 = closestHit.hitV0; selection.currentSnapEdgeV1 = closestHit.hitV1; }
+                                else if (minEd == ed1) { selection.currentSnapPoint = e1; selection.currentSnapEdgeV0 = closestHit.hitV1; selection.currentSnapEdgeV1 = closestHit.hitV2; }
+                                else { selection.currentSnapPoint = e2; selection.currentSnapEdgeV0 = closestHit.hitV2; selection.currentSnapEdgeV1 = closestHit.hitV0; }
                             } else {
                                 selection.currentSnapType = SnapType::Face;
-                                selection.currentSnapPoint = hit.hitPoint;
+                                selection.currentSnapPoint = closestHit.hitPoint;
                             }
                         }
                     }
@@ -210,8 +219,8 @@ namespace BimCore {
 
                 m_mouseWasDown = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
 
-            } else if (selection.activeTool == InteractionTool::Select && !uiHovered) {
-                HandleMousePicking(window, camera, document, selection, config);
+            } else if (selection.activeTool == InteractionTool::Select && !uiHovered && !documents.empty()) {
+                HandleMousePicking(window, camera, documents, selection, config);
             } else {
                 m_mouseWasDown = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
             }
@@ -221,33 +230,41 @@ namespace BimCore {
         }
     }
 
-    void InputController::HandleMousePicking(Window& window, Camera& camera, std::shared_ptr<BimDocument> document, SelectionState& selection, const EngineConfig& config) {
+    void InputController::HandleMousePicking(Window& window, Camera& camera, std::vector<std::shared_ptr<BimDocument>>& documents, SelectionState& selection, const EngineConfig& config) {
         bool mouseDown = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
         if (mouseDown && !m_mouseWasDown) {
             double mx, my;
             window.GetMousePosition(mx, my);
             Ray ray = ScreenToWorldRay(mx, my, window.GetWidth(), window.GetHeight(), camera.GetViewMatrix(), camera.GetProjectionMatrix(), camera.GetPosition());
 
-            float cXMin = selection.clipXMin;
-            float cXMax = selection.clipXMax;
-            float cYMin = selection.clipYMin;
-            float cYMax = selection.clipYMax;
-            float cZMin = selection.clipZMin;
-            float cZMax = selection.clipZMax;
+            float cXMin = selection.clipXMin; float cXMax = selection.clipXMax;
+            float cYMin = selection.clipYMin; float cYMax = selection.clipYMax;
+            float cZMin = selection.clipZMin; float cZMax = selection.clipZMax;
 
-            HitResult hit = Raycaster::CastRay(ray, document->GetGeometry(), cXMin, cXMax, cYMin, cYMax, cZMin, cZMax, selection.hiddenObjects, !selection.showOpeningsAndSpaces);
+            HitResult closestHit;
+            closestHit.distance = 1e9f;
+            std::shared_ptr<BimDocument> hitDoc = nullptr;
+
+            for (auto& doc : documents) {
+                if (doc->IsHidden()) continue; // --- FIXED: Don't raycast hidden models ---
+                HitResult hit = Raycaster::CastRay(ray, doc->GetGeometry(), cXMin, cXMax, cYMin, cYMax, cZMin, cZMax, selection.hiddenObjects, !selection.showOpeningsAndSpaces);
+                if (hit.hit && hit.distance < closestHit.distance) {
+                    closestHit = hit;
+                    hitDoc = doc;
+                }
+            }
 
             bool isCtrlPressed = window.IsKeyPressed(GLFW_KEY_LEFT_CONTROL) || window.IsKeyPressed(GLFW_KEY_RIGHT_CONTROL);
 
-            if (hit.hit) {
+            if (closestHit.hit && hitDoc) {
                 if (!isCtrlPressed) selection.objects.clear();
 
-                std::string baseClickGuid = hit.hitGuid.length() >= 22 ? hit.hitGuid.substr(0, 22) : hit.hitGuid;
+                std::string baseClickGuid = closestHit.hitGuid.length() >= 22 ? closestHit.hitGuid.substr(0, 22) : closestHit.hitGuid;
 
                 if (selection.selectAssemblies) {
                     std::string rootGuid = baseClickGuid;
                     while (true) {
-                        std::string p = document->GetParent(rootGuid);
+                        std::string p = hitDoc->GetParent(rootGuid);
                         if (p.empty()) break;
                         rootGuid = p;
                     }
@@ -255,7 +272,7 @@ namespace BimCore {
                     bool toggleOff = false;
                     if (isCtrlPressed) {
                         auto it = std::find_if(selection.objects.begin(), selection.objects.end(),
-                                               [&](const SelectedObject& o) { return o.guid == hit.hitGuid; });
+                                               [&](const SelectedObject& o) { return o.guid == closestHit.hitGuid; });
                         if (it != selection.objects.end()) toggleOff = true;
                     }
 
@@ -265,7 +282,7 @@ namespace BimCore {
                         std::string curr = stack.back();
                         stack.pop_back();
                         familyBaseGuids.push_back(curr);
-                        std::vector<std::string> kids = document->GetChildren(curr);
+                        std::vector<std::string> kids = hitDoc->GetChildren(curr);
                         stack.insert(stack.end(), kids.begin(), kids.end());
                     }
 
@@ -279,7 +296,7 @@ namespace BimCore {
                             ), selection.objects.end()
                         );
                     } else {
-                        for (const auto& sub : document->GetGeometry().subMeshes) {
+                        for (const auto& sub : hitDoc->GetGeometry().subMeshes) {
                             std::string bg = sub.guid.length() >= 22 ? sub.guid.substr(0, 22) : sub.guid;
                             if (std::find(familyBaseGuids.begin(), familyBaseGuids.end(), bg) != familyBaseGuids.end()) {
                                 auto it = std::find_if(selection.objects.begin(), selection.objects.end(),
@@ -288,9 +305,9 @@ namespace BimCore {
                                     SelectedObject so;
                                     so.guid = sub.guid;
                                     so.type = sub.type;
-                                    so.startIndex = sub.startIndex;
+                                    so.startIndex = sub.globalStartIndex;
                                     so.indexCount = sub.indexCount;
-                                    so.properties = document->GetElementProperties(bg);
+                                    so.properties = hitDoc->GetElementProperties(bg);
                                     selection.objects.push_back(so);
                                 }
                             }
@@ -298,17 +315,25 @@ namespace BimCore {
                     }
                 } else {
                     auto it = std::find_if(selection.objects.begin(), selection.objects.end(),
-                                           [&](const SelectedObject& o) { return o.guid == hit.hitGuid; });
+                                           [&](const SelectedObject& o) { return o.guid == closestHit.hitGuid; });
 
                     if (it != selection.objects.end()) {
                         if (isCtrlPressed) selection.objects.erase(it);
                     } else {
+                        uint32_t globalStart = 0;
+                        for (const auto& sub : hitDoc->GetGeometry().subMeshes) {
+                            if (sub.guid == closestHit.hitGuid) {
+                                globalStart = sub.globalStartIndex;
+                                break;
+                            }
+                        }
+
                         SelectedObject so;
-                        so.guid = hit.hitGuid;
-                        so.type = hit.hitType;
-                        so.startIndex = hit.hitStartIndex;
-                        so.indexCount = hit.hitIndexCount;
-                        so.properties = document->GetElementProperties(baseClickGuid);
+                        so.guid = closestHit.hitGuid;
+                        so.type = closestHit.hitType;
+                        so.startIndex = globalStart;
+                        so.indexCount = closestHit.hitIndexCount;
+                        so.properties = hitDoc->GetElementProperties(baseClickGuid);
                         selection.objects.push_back(so);
                     }
                 }

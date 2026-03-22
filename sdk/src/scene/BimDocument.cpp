@@ -5,7 +5,7 @@
 #include "BimDocument.h"
 #include <iostream>
 #include <algorithm>
-
+#include <glm/gtc/matrix_transform.hpp>
 // Strictly using early-bound generated C++ schemas for maximum type safety.
 #include <ifcparse/IfcFile.h>
 #include <ifcparse/Ifc2x3.h>
@@ -392,4 +392,34 @@ namespace BimCore {
         BIM_LOG("Document", "AST Commit Complete. Database synchronized with Ledger.");
         return true;
     }
+
+    void BimDocument::ApplyTransform(const glm::mat4& matrix) {
+        glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(matrix)));
+
+        for (auto& v : m_geometry.originalVertices) {
+            glm::vec4 p = matrix * glm::vec4(v.position[0], v.position[1], v.position[2], 1.0f);
+            v.position[0] = p.x; v.position[1] = p.y; v.position[2] = p.z;
+
+            glm::vec3 n = normalMatrix * glm::vec3(v.normal[0], v.normal[1], v.normal[2]);
+            n = glm::normalize(n);
+            v.normal[0] = n.x; v.normal[1] = n.y; v.normal[2] = n.z;
+        }
+
+        m_geometry.vertices = m_geometry.originalVertices;
+
+        for (int j=0; j<3; ++j) { m_geometry.minBounds[j] = 1e9f; m_geometry.maxBounds[j] = -1e9f; }
+        for (const auto& v : m_geometry.vertices) {
+            for (int j=0; j<3; ++j) {
+                if (v.position[j] < m_geometry.minBounds[j]) m_geometry.minBounds[j] = v.position[j];
+                if (v.position[j] > m_geometry.maxBounds[j]) m_geometry.maxBounds[j] = v.position[j];
+            }
+        }
+        for (int j=0; j<3; ++j) m_geometry.center[j] = (m_geometry.minBounds[j] + m_geometry.maxBounds[j]) * 0.5f;
+
+        for (auto& sub : m_geometry.subMeshes) {
+            glm::vec4 cp = matrix * glm::vec4(sub.center[0], sub.center[1], sub.center[2], 1.0f);
+            sub.center[0] = cp.x; sub.center[1] = cp.y; sub.center[2] = cp.z;
+        }
+    }
+
 }

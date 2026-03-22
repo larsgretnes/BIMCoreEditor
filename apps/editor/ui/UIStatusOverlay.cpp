@@ -32,7 +32,7 @@ namespace BimCore {
         ImGui::End();
     }
 
-    void UIStatusOverlay::RenderStatusPanel(SelectionState& state, std::shared_ptr<BimDocument> document) {
+    void UIStatusOverlay::RenderStatusPanel(SelectionState& state, std::vector<std::shared_ptr<BimDocument>>& documents) {
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         const float statsPanelHeight = 75.0f; // --- FIXED: Halved the height ---
         const float mainPanelHeight = viewport->WorkSize.y - statsPanelHeight;
@@ -54,10 +54,19 @@ namespace BimCore {
 
         // --- FIXED: Display FPS as a whole number ---
         ImGui::Text("FPS: %.0f", ImGui::GetIO().Framerate);
-        if (document) {
+
+        if (!documents.empty()) {
+            size_t totalElements = 0;
+            size_t totalVertices = 0;
+
+            for (const auto& doc : documents) {
+                totalElements += doc->GetGeometry().subMeshes.size();
+                totalVertices += doc->GetGeometry().vertices.size();
+            }
+
             ImGui::Text("Elements: %zu  |  Vertices: %zu  |  Selected: %zu",
-                        document->GetGeometry().subMeshes.size(),
-                        document->GetGeometry().vertices.size(),
+                        totalElements,
+                        totalVertices,
                         state.objects.size());
         }
         ImGui::End();

@@ -14,7 +14,7 @@ namespace BimCore {
         ImGui::NewFrame();
     }
 
-    void AppUI::Render(SelectionState& selection, GraphicsContext& graphics, std::shared_ptr<BimDocument> document, Camera& camera, float configMaxExplode, bool& triggerFocus, bool isFlightMode) {
+    void AppUI::Render(SelectionState& selection, GraphicsContext& graphics, std::vector<std::shared_ptr<BimDocument>>& documents, Camera& camera, float configMaxExplode, bool& triggerFocus, bool isFlightMode, bool& triggerRebuild) {
 
         m_overlay.RenderFlyMode(isFlightMode);
 
@@ -27,9 +27,9 @@ namespace BimCore {
 
         bool editingActiveAtStartOfFrame = !state.activeEditGuid.empty();
 
-        m_mainPanel.Render(state, document, configMaxExplode, triggerFocus);
-        m_overlay.RenderStatusPanel(state, document);
-        m_propertiesPanel.Render(state, document, triggerFocus);
+        m_mainPanel.Render(state, documents, configMaxExplode, triggerFocus, triggerRebuild);
+        m_overlay.RenderStatusPanel(state, documents);
+        m_propertiesPanel.Render(state, documents, triggerFocus);
         m_overlay.RenderContextMenu(state, triggerFocus);
 
         if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !editingActiveAtStartOfFrame) {

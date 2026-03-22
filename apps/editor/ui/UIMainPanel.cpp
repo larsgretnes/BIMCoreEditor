@@ -8,12 +8,14 @@
 #include <thread>
 #include <cctype>
 #include <fstream>
+#include <filesystem>
+#include <glm/gtc/matrix_transform.hpp>
 #include "platform/portable-file-dialogs.h"
 
 #define ICON_FA_FOLDER_OPEN   "\xef\x81\xbc"
 #define ICON_FA_SAVE          "\xef\x83\x87"
-#define ICON_FA_FILE_IMPORT   "\xef\x95\xaf" // --- NEW: Import Icon ---
-#define ICON_FA_FILE_EXPORT   "\xef\x95\xae" // --- NEW: Export Icon ---
+#define ICON_FA_FILE_IMPORT   "\xef\x95\xaf"
+#define ICON_FA_FILE_EXPORT   "\xef\x95\xae"
 #define ICON_FA_MOUSE_POINTER "\xef\x89\x85"
 #define ICON_FA_ARROWS_ALT    "\xef\x82\xb2"
 #define ICON_FA_SYNC          "\xef\x80\xa1"
@@ -38,9 +40,8 @@ namespace BimCore {
         return it != str.end();
     }
 
-    void UIMainPanel::Render(SelectionState& state, std::shared_ptr<BimDocument> document, float configMaxExplode, bool& triggerFocus) {
+    void UIMainPanel::Render(SelectionState& state, std::vector<std::shared_ptr<BimDocument>>& documents, float configMaxExplode, bool& triggerFocus, bool& triggerRebuild) {
 
-        // --- NEW: Safe UI Rendering from 2D coordinates ---
         if (state.measureToolActive) {
             ImDrawList* drawList = ImGui::GetBackgroundDrawList();
             ImU32 colorMeas     = IM_COL32(255, 165, 0, 255);
@@ -118,7 +119,6 @@ namespace BimCore {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save Native IFC");
         ImGui::SameLine();
 
-        // --- NEW: Import Dropdown Menu ---
         if (ImGui::Button(ICON_FA_FILE_IMPORT, bigBtnSize)) ImGui::OpenPopup("ImportMenu");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import External Data");
         if (ImGui::BeginPopup("ImportMenu")) {
@@ -131,7 +131,6 @@ namespace BimCore {
         }
         ImGui::SameLine();
 
-        // --- NEW: Export Dropdown Menu ---
         if (ImGui::Button(ICON_FA_FILE_EXPORT, bigBtnSize)) ImGui::OpenPopup("ExportMenu");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Export Geometry");
         if (ImGui::BeginPopup("ExportMenu")) {
@@ -142,7 +141,6 @@ namespace BimCore {
         }
 
         float spacing = ImGui::GetStyle().ItemSpacing.x;
-
         float rightButtonGroupWidth = (bigBtnDim * 4.0f) + (spacing * 3.0f);
         float cursorX = ImGui::GetWindowContentRegionMax().x - rightButtonGroupWidth;
 
@@ -163,7 +161,6 @@ namespace BimCore {
             drawToolBtn(InteractionTool::Pan, ICON_FA_ARROWS_ALT, "Pan (2)"); ImGui::SameLine();
             drawToolBtn(InteractionTool::Orbit, ICON_FA_SYNC, "Orbit (3)"); ImGui::SameLine();
 
-            // --- FIXED: Draw Measure as an independent Toggle Button ---
             bool isMeasActive = state.measureToolActive;
             if (isMeasActive) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
             if (ImGui::Button(ICON_FA_RULER, bigBtnSize)) {
@@ -176,7 +173,6 @@ namespace BimCore {
             if (isMeasActive) ImGui::PopStyleColor();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Measure Tool (M)");
 
-
             ImGui::Spacing();
         if (ImGui::Button(ICON_FA_TIMES_CIRCLE, bigBtnSize)) {
             state.objects.clear();
@@ -186,7 +182,11 @@ namespace BimCore {
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear selected & measurements");
         ImGui::SameLine();
-        if (ImGui::Button(ICON_FA_EYE, bigBtnSize)) { state.hiddenObjects.clear(); state.hiddenStateChanged = true; }
+        if (ImGui::Button(ICON_FA_EYE, bigBtnSize)) {
+            state.hiddenObjects.clear();
+            for(auto& d : documents) d->SetHidden(false); // Make sure parent models are shown too
+            state.hiddenStateChanged = true;
+        }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show all");
         ImGui::SameLine();
         if (ImGui::Button(ICON_FA_HISTORY, bigBtnSize)) { ImGui::OpenPopup("Reset Model"); }
@@ -241,7 +241,7 @@ namespace BimCore {
         }
 
         ImGui::PopStyleVar();
-        DrawResetModal(state, document);
+        DrawResetModal(state, documents, triggerRebuild);
         ImGui::Separator();
 
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.25f, 0.30f, 0.35f, 1.0f));
@@ -267,10 +267,32 @@ namespace BimCore {
             float bMinY = -100.0f, bMaxY = 100.0f;
             float bMinZ = -100.0f, bMaxZ = 100.0f;
 
-            if (document) {
-                bMinX = document->GetGeometry().minBounds[0] - 0.1f; bMaxX = document->GetGeometry().maxBounds[0] + 0.1f;
-                bMinY = document->GetGeometry().minBounds[1] - 0.1f; bMaxY = document->GetGeometry().maxBounds[1] + 0.1f;
-                bMinZ = document->GetGeometry().minBounds[2] - 0.1f; bMaxZ = document->GetGeometry().maxBounds[2] + 0.1f;
+            if (!documents.empty()) {
+                bMinX = kFloatMax; bMaxX = kFloatMin;
+                bMinY = kFloatMax; bMaxY = kFloatMin;
+                bMinZ = kFloatMax; bMaxZ = kFloatMin;
+                for (auto& doc : documents) {
+                    auto& geom = doc->GetGeometry();
+                    if (geom.minBounds[0] < bMinX) bMinX = geom.minBounds[0];
+                    if (geom.maxBounds[0] > bMaxX) bMaxX = geom.maxBounds[0];
+                    if (geom.minBounds[1] < bMinY) bMinY = geom.minBounds[1];
+                    if (geom.maxBounds[1] > bMaxY) bMaxY = geom.maxBounds[1];
+                    if (geom.minBounds[2] < bMinZ) bMinZ = geom.minBounds[2];
+                    if (geom.maxBounds[2] > bMaxZ) bMaxZ = geom.maxBounds[2];
+                }
+
+                float expand = 0.0f;
+                if (state.explodeFactor > 0.01f) {
+                    float extX = bMaxX - bMinX;
+                    float extY = bMaxY - bMinY;
+                    float extZ = bMaxZ - bMinZ;
+                    float maxRadius = std::sqrt(extX*extX + extY*extY + extZ*extZ) * 0.5f;
+                    expand = maxRadius * state.explodeFactor;
+                }
+
+                bMinX -= (0.1f + expand); bMaxX += (0.1f + expand);
+                bMinY -= (0.1f + expand); bMaxY += (0.1f + expand);
+                bMinZ -= (0.1f + expand); bMaxZ += (0.1f + expand);
             }
 
             auto drawClipRow = [](const char* axis, bool& showMin, float& valMin, bool& showMax, float& valMax, float minB, float maxB, float* col) {
@@ -279,7 +301,6 @@ namespace BimCore {
                 ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - ImGui::GetFrameHeight());
                 ImGui::ColorEdit3("##col", col, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
 
-                // --- FIXED: Restored DragFloat for fine tuning (ALT = slow, SHIFT = fast) ---
                 ImGui::Checkbox("Min", &showMin); ImGui::SameLine();
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
                 ImGui::DragFloat("##vmin", &valMin, 0.05f, minB, valMax, "%.2f");
@@ -298,25 +319,20 @@ namespace BimCore {
         }
         ImGui::Separator();
 
-        if (!document) {
-            ImGui::TextDisabled("No model loaded.");
+        if (documents.empty()) {
+            ImGui::TextDisabled("No models loaded.");
             ImGui::End();
             return;
         }
 
-        const auto& subMeshes = document->GetGeometry().subMeshes;
-
-        if (!state.groupsBuilt) {
-            state.cachedGroups.clear();
-            state.cachedNames.clear();
-            for (uint32_t i = 0; i < subMeshes.size(); ++i) {
-                if (!state.showOpeningsAndSpaces && (subMeshes[i].type == "IfcOpeningElement" || subMeshes[i].type == "IfcSpace")) continue;
-                state.cachedGroups[subMeshes[i].type].push_back(i);
+        std::vector<std::pair<BimDocument*, uint32_t>> allSubMeshes;
+        for (auto& doc : documents) {
+            for (uint32_t i=0; i<doc->GetGeometry().subMeshes.size(); ++i) {
+                allSubMeshes.push_back({doc.get(), i});
             }
-            state.groupsBuilt = true;
         }
 
-        bool enterPressed = ImGui::InputTextWithHint("##globSearch", ICON_FA_SEARCH " Search Model...", state.globalSearchBuf, sizeof(state.globalSearchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+        bool enterPressed = ImGui::InputTextWithHint("##globSearch", ICON_FA_SEARCH " Search All Models...", state.globalSearchBuf, sizeof(state.globalSearchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine();
         if (ImGui::Button("Search") || enterPressed) {
             std::string query = state.globalSearchBuf;
@@ -324,10 +340,11 @@ namespace BimCore {
                 state.isSearchActive = true;
                 state.isSearching.store(true);
 
-                std::thread([&state, document, query, subMeshes]() {
+                std::thread([&state, query, allSubMeshes]() {
                     std::vector<SearchResult> results;
-                    for (uint32_t i = 0; i < subMeshes.size(); ++i) {
-                        const auto& sub = subMeshes[i];
+                    for (uint32_t i = 0; i < allSubMeshes.size(); ++i) {
+                        auto doc = allSubMeshes[i].first;
+                        const auto& sub = doc->GetGeometry().subMeshes[allSubMeshes[i].second];
 
                         if (!state.showOpeningsAndSpaces && (sub.type == "IfcOpeningElement" || sub.type == "IfcSpace")) continue;
 
@@ -342,7 +359,7 @@ namespace BimCore {
                             results.push_back({i, "GUID", "GUID", sub.guid});
                             continue;
                         }
-                        auto props = document->GetElementProperties(sub.guid);
+                        auto props = doc->GetElementProperties(sub.guid);
                         for (const auto& [pk, pv] : props) {
                             if (icontains(pk, query) || icontains(pv.value, query)) {
                                 results.push_back({i, "Property", pk, pv.value});
@@ -378,7 +395,7 @@ namespace BimCore {
 
         if (state.isSearchActive) {
             if (state.isSearching.load()) {
-                ImGui::TextDisabled("Searching across %zu elements...", subMeshes.size());
+                ImGui::TextDisabled("Searching across %zu elements...", allSubMeshes.size());
             } else {
                 std::lock_guard<std::mutex> lock(state.searchMutex);
 
@@ -389,8 +406,10 @@ namespace BimCore {
                         std::ofstream out(path);
                         out << "GUID,Type,Match Type,Match Key,Match Value\n";
                         for (auto& res : state.searchResults) {
-                            out << subMeshes[res.subMeshIndex].guid << ","
-                            << subMeshes[res.subMeshIndex].type << ","
+                            auto doc = allSubMeshes[res.subMeshIndex].first;
+                            const auto& sub = doc->GetGeometry().subMeshes[allSubMeshes[res.subMeshIndex].second];
+                            out << sub.guid << ","
+                            << sub.type << ","
                             << res.matchType << ","
                             << "\"" << res.matchKey << "\",\"" << res.matchValue << "\"\n";
                         }
@@ -415,10 +434,11 @@ namespace BimCore {
                             ImGui::TableSetColumnIndex(0);
 
                             const auto& res = state.searchResults[i];
-                            const auto& sub = subMeshes[res.subMeshIndex];
+                            auto doc = allSubMeshes[res.subMeshIndex].first;
+                            const auto& sub = doc->GetGeometry().subMeshes[allSubMeshes[res.subMeshIndex].second];
 
                             if (state.cachedNames.find(sub.guid) == state.cachedNames.end()) {
-                                auto props = document->GetElementProperties(sub.guid);
+                                auto props = doc->GetElementProperties(sub.guid);
                                 state.cachedNames[sub.guid] = (props.count("Name") && !props["Name"].value.empty()) ? props["Name"].value : sub.type;
                             }
 
@@ -431,7 +451,9 @@ namespace BimCore {
                             ImVec4 hoverColor = isSelected ? ImGui::GetStyleColorVec4(ImGuiCol_Header) : ImVec4(0,0,0,0);
                             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, hoverColor);
                             if (ImGui::Selectable(label.c_str(), isSelected)) {
-                                HandleShiftSelection(state, i, res.subMeshIndex, "SEARCH_RES", searchMeshIndices, document);
+                                std::shared_ptr<BimDocument> targetDocPtr;
+                                for (auto d : documents) if (d.get() == doc) targetDocPtr = d;
+                                HandleShiftSelection(state, i, allSubMeshes[res.subMeshIndex].second, "SEARCH_RES", searchMeshIndices, targetDocPtr);
                             }
                             ImGui::PopStyleColor();
 
@@ -442,111 +464,183 @@ namespace BimCore {
                 }
             }
         } else {
-            for (const auto& [type, indices] : state.cachedGroups) {
+            for (auto it = documents.begin(); it != documents.end(); ) {
+                auto& doc = *it;
+                std::string filename = std::filesystem::path(doc->GetFilePath()).filename().string();
 
-                bool groupHasHidden = false, groupHasDeleted = false, groupHasEdited = false, groupHasSelected = false;
-                for (uint32_t idx : indices) {
-                    const auto& sub = subMeshes[idx];
-                    if (state.hiddenObjects.count(sub.guid)) groupHasHidden = true;
-                    if (state.deletedObjects.count(sub.guid)) groupHasDeleted = true;
-                    if (document->HasModifiedProperties(sub.guid)) groupHasEdited = true;
-                    if (!groupHasSelected && std::any_of(state.objects.begin(), state.objects.end(), [&](const SelectedObject& o) { return o.guid == sub.guid; })) {
-                        groupHasSelected = true;
+                // --- FIXED: Display (Hidden) next to the filename ---
+                if (doc->IsHidden()) filename += " (Hidden)";
+
+                ImGui::PushID(doc.get());
+                bool isFileNodeOpen = ImGui::TreeNodeEx("FileNode", ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_DefaultOpen, "%s", filename.c_str());
+
+                if (ImGui::BeginPopupContextItem()) {
+                    // --- FIXED: Context menu options to Hide/Show model ---
+                    if (doc->IsHidden()) {
+                        if (ImGui::MenuItem("Show model")) doc->SetHidden(false);
+                    } else {
+                        if (ImGui::MenuItem("Hide model")) {
+                            doc->SetHidden(true);
+                            // Clear selections for this hidden model
+                            state.objects.erase(std::remove_if(state.objects.begin(), state.objects.end(),
+                                                               [&](const SelectedObject& o) {
+                                                                   for (const auto& sub : doc->GetGeometry().subMeshes) { if (o.guid == sub.guid) return true; } return false;
+                                                               }), state.objects.end());
+                        }
                     }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Rotate +90° X (Flip Up)")) {
+                        doc->ApplyTransform(glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1, 0, 0)));
+                        triggerRebuild = true;
+                    }
+                    if (ImGui::MenuItem("Rotate -90° X")) {
+                        doc->ApplyTransform(glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1, 0, 0)));
+                        triggerRebuild = true;
+                    }
+                    if (ImGui::MenuItem("Rotate +90° Y")) {
+                        doc->ApplyTransform(glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0, 1, 0)));
+                        triggerRebuild = true;
+                    }
+                    if (ImGui::MenuItem("Rotate +90° Z")) {
+                        doc->ApplyTransform(glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0, 0, 1)));
+                        triggerRebuild = true;
+                    }
+                    ImGui::Separator();
+
+                    // --- FIXED: Rename to "Close model" ---
+                    if (ImGui::MenuItem("Close model")) {
+                        it = documents.erase(it);
+                        state.objects.clear();
+                        triggerRebuild = true;
+                        ImGui::EndPopup();
+                        if (isFileNodeOpen) ImGui::TreePop();
+                        ImGui::PopID();
+                        continue;
+                    }
+                    ImGui::EndPopup();
                 }
 
-                std::string extraTags = "";
-                if (groupHasHidden) extraTags += " (hidden elements)";
-                if (groupHasDeleted) extraTags += " (deleted elements)";
-                if (groupHasEdited) extraTags += " (edited elements)";
+                if (isFileNodeOpen) {
+                    if (doc->IsHidden()) {
+                        ImGui::TextDisabled("Model is currently hidden.");
+                    } else {
+                        std::map<std::string, std::vector<uint32_t>> docGroups;
+                        const auto& subMeshes = doc->GetGeometry().subMeshes;
+                        for (uint32_t i = 0; i < subMeshes.size(); ++i) {
+                            if (!state.showOpeningsAndSpaces && (subMeshes[i].type == "IfcOpeningElement" || subMeshes[i].type == "IfcSpace")) continue;
+                            docGroups[subMeshes[i].type].push_back(i);
+                        }
 
-                if (groupHasSelected) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
-
-                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.15f, 0.3f, 0.45f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.2f, 0.35f, 0.5f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.4f, 0.55f, 1.0f));
-                bool isNodeOpen = ImGui::TreeNodeEx(type.c_str(), ImGuiTreeNodeFlags_Framed, "%s (%zu)%s", type.c_str(), indices.size(), extraTags.c_str());
-                ImGui::PopStyleColor(3);
-
-                if (isNodeOpen) {
-                    if (ImGui::BeginTable(("##table_" + type).c_str(), 2, ImGuiTableFlags_SizingFixedFit)) {
-                        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-                        ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 25.0f);
-
-                        ImGuiListClipper clipper;
-                        clipper.Begin(static_cast<int>(indices.size()));
-                        while (clipper.Step()) {
-                            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
-                                const auto& sub = subMeshes[indices[i]];
-
-                                ImGui::TableNextRow();
-                                ImGui::TableSetColumnIndex(0);
-
-                                if (state.cachedNames.find(sub.guid) == state.cachedNames.end()) {
-                                    auto props = document->GetElementProperties(sub.guid);
-                                    state.cachedNames[sub.guid] = (props.count("Name") && !props["Name"].value.empty()) ? props["Name"].value : sub.type;
-                                }
-
-                                bool isHidden = state.hiddenObjects.count(sub.guid) > 0;
-                                bool isDeleted = state.deletedObjects.count(sub.guid) > 0;
-                                bool isEdited = document->HasModifiedProperties(sub.guid);
-
-                                std::string status = "";
-                                if (isEdited && !isDeleted) status = " (Edited)";
-
-                                std::string shortGuid = sub.guid.length() >= 8 ? sub.guid.substr(sub.guid.length() - 8) : sub.guid;
-                                std::string label = state.cachedNames[sub.guid] + " [" + shortGuid + "]" + status + "###" + sub.guid;
-
-                                bool isSelected = std::any_of(state.objects.begin(), state.objects.end(), [&](const SelectedObject& o) { return o.guid == sub.guid; });
-
-                                if (isDeleted) {
-                                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-                                } else if (isHidden) {
-                                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-                                }
-
-                                ImVec4 hoverColor = isSelected ? ImGui::GetStyleColorVec4(ImGuiCol_Header) : ImVec4(0,0,0,0);
-                                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, hoverColor);
-                                if (ImGui::Selectable(label.c_str(), isSelected) && !isDeleted) {
-                                    HandleShiftSelection(state, i, indices[i], type, indices, document);
-                                }
-                                ImGui::PopStyleColor();
-
-                                if (isSelected && triggerFocus) ImGui::SetScrollHereY(0.5f);
-                                if (isDeleted || isHidden) ImGui::PopStyleColor();
-
-                                if (isDeleted) {
-                                    ImVec2 min = ImGui::GetItemRectMin();
-                                    ImVec2 max = ImGui::GetItemRectMax();
-                                    float midY = (min.y + max.y) * 0.5f;
-                                    ImGui::GetWindowDrawList()->AddLine(ImVec2(min.x, midY), ImVec2(max.x, midY), IM_COL32(200, 50, 50, 255), 1.5f);
-                                }
-
-                                ImGui::TableSetColumnIndex(1);
-                                if (isDeleted) {
-                                    ImGui::PushID((sub.guid + "_undo").c_str());
-                                    if (ImGui::Button(ICON_FA_UNDO, sqBtn)) {
-                                        state.deletedObjects.erase(sub.guid);
-                                        state.hiddenObjects.erase(sub.guid);
-                                        state.hiddenStateChanged = true;
-                                    }
-                                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Undo delete");
-                                    ImGui::PopID();
-                                } else if (isHidden) {
-                                    ImGui::PushID((sub.guid + "_show").c_str());
-                                    if (ImGui::Button(ICON_FA_EYE, sqBtn)) {
-                                        state.hiddenObjects.erase(sub.guid);
-                                        state.hiddenStateChanged = true;
-                                    }
-                                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show element");
-                                    ImGui::PopID();
+                        for (const auto& [type, indices] : docGroups) {
+                            bool groupHasHidden = false, groupHasDeleted = false, groupHasEdited = false, groupHasSelected = false;
+                            for (uint32_t idx : indices) {
+                                const auto& sub = subMeshes[idx];
+                                if (state.hiddenObjects.count(sub.guid)) groupHasHidden = true;
+                                if (state.deletedObjects.count(sub.guid)) groupHasDeleted = true;
+                                if (doc->HasModifiedProperties(sub.guid)) groupHasEdited = true;
+                                if (!groupHasSelected && std::any_of(state.objects.begin(), state.objects.end(), [&](const SelectedObject& o) { return o.guid == sub.guid; })) {
+                                    groupHasSelected = true;
                                 }
                             }
+
+                            std::string extraTags = "";
+                            if (groupHasHidden) extraTags += " (hidden elements)";
+                            if (groupHasDeleted) extraTags += " (deleted elements)";
+                            if (groupHasEdited) extraTags += " (edited elements)";
+
+                            if (groupHasSelected) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+
+                            ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.15f, 0.3f, 0.45f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.2f, 0.35f, 0.5f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.4f, 0.55f, 1.0f));
+                            bool isNodeOpen = ImGui::TreeNodeEx(type.c_str(), ImGuiTreeNodeFlags_Framed, "%s (%zu)%s", type.c_str(), indices.size(), extraTags.c_str());
+                            ImGui::PopStyleColor(3);
+
+                            if (isNodeOpen) {
+                                if (ImGui::BeginTable(("##table_" + type).c_str(), 2, ImGuiTableFlags_SizingFixedFit)) {
+                                    ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+                                    ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 25.0f);
+
+                                    ImGuiListClipper clipper;
+                                    clipper.Begin(static_cast<int>(indices.size()));
+                                    while (clipper.Step()) {
+                                        for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
+                                            const auto& sub = subMeshes[indices[i]];
+
+                                            ImGui::TableNextRow();
+                                            ImGui::TableSetColumnIndex(0);
+
+                                            if (state.cachedNames.find(sub.guid) == state.cachedNames.end()) {
+                                                auto props = doc->GetElementProperties(sub.guid);
+                                                state.cachedNames[sub.guid] = (props.count("Name") && !props["Name"].value.empty()) ? props["Name"].value : sub.type;
+                                            }
+
+                                            bool isHidden = state.hiddenObjects.count(sub.guid) > 0;
+                                            bool isDeleted = state.deletedObjects.count(sub.guid) > 0;
+                                            bool isEdited = doc->HasModifiedProperties(sub.guid);
+
+                                            std::string status = "";
+                                            if (isEdited && !isDeleted) status = " (Edited)";
+
+                                            std::string shortGuid = sub.guid.length() >= 8 ? sub.guid.substr(sub.guid.length() - 8) : sub.guid;
+                                            std::string label = state.cachedNames[sub.guid] + " [" + shortGuid + "]" + status + "###" + sub.guid;
+
+                                            bool isSelected = std::any_of(state.objects.begin(), state.objects.end(), [&](const SelectedObject& o) { return o.guid == sub.guid; });
+
+                                            if (isDeleted) {
+                                                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+                                            } else if (isHidden) {
+                                                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                                            }
+
+                                            ImVec4 hoverColor = isSelected ? ImGui::GetStyleColorVec4(ImGuiCol_Header) : ImVec4(0,0,0,0);
+                                            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, hoverColor);
+                                            if (ImGui::Selectable(label.c_str(), isSelected) && !isDeleted) {
+                                                HandleShiftSelection(state, i, indices[i], type + "_" + filename, indices, doc);
+                                            }
+                                            ImGui::PopStyleColor();
+
+                                            if (isSelected && triggerFocus) ImGui::SetScrollHereY(0.5f);
+                                            if (isDeleted || isHidden) ImGui::PopStyleColor();
+
+                                            if (isDeleted) {
+                                                ImVec2 min = ImGui::GetItemRectMin();
+                                                ImVec2 max = ImGui::GetItemRectMax();
+                                                float midY = (min.y + max.y) * 0.5f;
+                                                ImGui::GetWindowDrawList()->AddLine(ImVec2(min.x, midY), ImVec2(max.x, midY), IM_COL32(200, 50, 50, 255), 1.5f);
+                                            }
+
+                                            ImGui::TableSetColumnIndex(1);
+                                            if (isDeleted) {
+                                                ImGui::PushID((sub.guid + "_undo").c_str());
+                                                if (ImGui::Button(ICON_FA_UNDO, sqBtn)) {
+                                                    state.deletedObjects.erase(sub.guid);
+                                                    state.hiddenObjects.erase(sub.guid);
+                                                    state.hiddenStateChanged = true;
+                                                }
+                                                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Undo delete");
+                                                ImGui::PopID();
+                                            } else if (isHidden) {
+                                                ImGui::PushID((sub.guid + "_show").c_str());
+                                                if (ImGui::Button(ICON_FA_EYE, sqBtn)) {
+                                                    state.hiddenObjects.erase(sub.guid);
+                                                    state.hiddenStateChanged = true;
+                                                }
+                                                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show element");
+                                                ImGui::PopID();
+                                            }
+                                        }
+                                    }
+                                    ImGui::EndTable();
+                                }
+                                ImGui::TreePop();
+                            }
                         }
-                        ImGui::EndTable();
                     }
                     ImGui::TreePop();
                 }
+                ImGui::PopID();
+                ++it;
             }
         }
         ImGui::EndChild();
@@ -566,7 +660,9 @@ namespace BimCore {
                 const auto& targetSub = subMeshes[targetMeshIdx];
                 bool isSel = std::any_of(state.objects.begin(), state.objects.end(), [&](const SelectedObject& o) { return o.guid == targetSub.guid; });
                 if (!isSel) {
-                    SelectedObject so; so.guid = targetSub.guid; so.type = targetSub.type; so.startIndex = targetSub.startIndex; so.indexCount = targetSub.indexCount; so.properties = document->GetElementProperties(targetSub.guid);
+                    SelectedObject so; so.guid = targetSub.guid; so.type = targetSub.type;
+                    so.startIndex = targetSub.globalStartIndex; so.indexCount = targetSub.indexCount;
+                    so.properties = document->GetElementProperties(targetSub.guid);
                     state.objects.push_back(so);
                 }
             }
@@ -575,7 +671,9 @@ namespace BimCore {
             bool isSelected = std::any_of(state.objects.begin(), state.objects.end(), [&](const SelectedObject& o) { return o.guid == subMeshes[meshIdx].guid; });
             if (!isSelected) {
                 const auto& targetSub = subMeshes[meshIdx];
-                SelectedObject so; so.guid = targetSub.guid; so.type = targetSub.type; so.startIndex = targetSub.startIndex; so.indexCount = targetSub.indexCount; so.properties = document->GetElementProperties(targetSub.guid);
+                SelectedObject so; so.guid = targetSub.guid; so.type = targetSub.type;
+                so.startIndex = targetSub.globalStartIndex; so.indexCount = targetSub.indexCount;
+                so.properties = document->GetElementProperties(targetSub.guid);
                 state.objects.push_back(so);
             } else if (io.KeyCtrl) {
                 state.objects.erase(std::remove_if(state.objects.begin(), state.objects.end(), [&](const SelectedObject& o) { return o.guid == subMeshes[meshIdx].guid; }), state.objects.end());
@@ -586,23 +684,20 @@ namespace BimCore {
         state.selectionChanged = true;
     }
 
-    void UIMainPanel::DrawResetModal(SelectionState& state, std::shared_ptr<BimDocument> document) {
+    void UIMainPanel::DrawResetModal(SelectionState& state, std::vector<std::shared_ptr<BimDocument>>& documents, bool& triggerRebuild) {
         if (ImGui::BeginPopupModal("Reset Model", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("This will reset all items back to original.\nAre you sure?");
             ImGui::Separator();
 
             if (ImGui::Button("OK", ImVec2(120, 0))) {
-                if (document) {
+                for (auto& doc : documents) {
+                    doc->SetHidden(false); // --- FIXED: Show all parent models on reset ---
                     for (auto& [guid, props] : state.originalProperties) {
-                        for (auto& [k, v] : props) document->UpdateElementProperty(guid, k, v);
+                        for (auto& [k, v] : props) doc->UpdateElementProperty(guid, k, v);
                     }
-                    state.clipXMin = document->GetGeometry().minBounds[0] - 0.1f;
-                    state.clipXMax = document->GetGeometry().maxBounds[0] + 0.1f;
-                    state.clipYMin = document->GetGeometry().minBounds[1] - 0.1f;
-                    state.clipYMax = document->GetGeometry().maxBounds[1] + 0.1f;
-                    state.clipZMin = document->GetGeometry().minBounds[2] - 0.1f;
-                    state.clipZMax = document->GetGeometry().maxBounds[2] + 0.1f;
                 }
+
+                triggerRebuild = true;
 
                 state.explodeFactor = 0.0f;
                 state.updateGeometry = true;

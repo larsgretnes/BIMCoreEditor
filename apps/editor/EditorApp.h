@@ -36,6 +36,9 @@ namespace BimCore {
         void FocusCameraOnSelection();
         void Render();
 
+        // --- NEW: Master Mesh Builder ---
+        void RebuildMasterMesh();
+
     private:
         // --- Core Engine Systems ---
         EngineConfig                        m_config;
@@ -46,11 +49,15 @@ namespace BimCore {
         AppUI                               m_uiSystem;
         InputController                     m_input;
 
-        // --- Document State ---
-        std::shared_ptr<BimDocument>        m_document;
+        // --- Document State (Multi-Model Support) ---
+        std::vector<std::shared_ptr<BimDocument>> m_documents;
         std::shared_ptr<BimDocument>        m_pendingDoc;
         std::mutex                          m_docMutex;
         LoadState                           m_globalLoadState;
+
+        std::vector<Vertex>                 m_masterVertices;
+        std::vector<uint32_t>               m_masterIndices;
+        bool                                m_triggerRebuild = false;
 
         // --- File Tracking ---
         std::string                         m_currentFilename;

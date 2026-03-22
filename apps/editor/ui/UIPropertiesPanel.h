@@ -4,13 +4,17 @@
 #pragma once
 #include "UIState.h"
 #include <memory>
+#include <vector>
 
 namespace BimCore {
     class UIPropertiesPanel {
     public:
-        void Render(SelectionState& state, std::shared_ptr<BimDocument> document, bool& triggerFocus);
+        void Render(SelectionState& state, std::vector<std::shared_ptr<BimDocument>>& documents, bool& triggerFocus);
     private:
-        void DrawSharedPropertyTable(SelectionState& state, std::shared_ptr<BimDocument> document, const std::string& locFilter, const ImVec2& sqBtn, bool& globalRefreshNeeded);
-        void DrawPropertyTable(SelectionState& state, SelectedObject& obj, std::shared_ptr<BimDocument> document, const std::string& locFilter, const ImVec2& sqBtn, bool& objNeedsRefresh, std::string& propToDelete);
+        void DrawSharedPropertyTable(SelectionState& state, std::vector<std::shared_ptr<BimDocument>>& documents, const std::string& locFilter, const ImVec2& sqBtn, bool& globalRefreshNeeded);
+        void DrawPropertyTable(SelectionState& state, SelectedObject& obj, std::vector<std::shared_ptr<BimDocument>>& documents, const std::string& locFilter, const ImVec2& sqBtn, bool& objNeedsRefresh, std::string& propToDelete);
+
+        // Helper to find the specific document that owns a GUID
+        std::shared_ptr<BimDocument> FindOwnerDocument(const std::string& guid, const std::vector<std::shared_ptr<BimDocument>>& documents);
     };
 }

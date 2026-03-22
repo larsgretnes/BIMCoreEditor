@@ -4,6 +4,7 @@
 #pragma once
 
 #include <memory>
+#include <vector>
 
 #include "platform/Window.h"
 #include "scene/Camera.h"
@@ -31,19 +32,19 @@ namespace BimCore {
     public:
         void Update(Window&                      window,
                     Camera&                      camera,
-                    std::shared_ptr<BimDocument> document,
+                    std::vector<std::shared_ptr<BimDocument>>& documents,
                     SelectionState&              selection,
                     const EngineConfig&          config,
                     float                        deltaTime,
                     uint32_t&                    currentLightingMode,
                     bool&                        triggerFocus);
 
-        bool IsFlightMode() const; // <-- FIXED: Added missing declaration
+        bool IsFlightMode() const;
 
     private:
         void HandleMousePicking(Window&                      window,
                                 Camera&                      camera,
-                                std::shared_ptr<BimDocument> document,
+                                std::vector<std::shared_ptr<BimDocument>>& documents,
                                 SelectionState&              selection,
                                 const EngineConfig&          config);
 

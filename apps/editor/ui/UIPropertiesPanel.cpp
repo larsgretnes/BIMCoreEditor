@@ -25,7 +25,16 @@ namespace BimCore {
         return it != str.end();
     }
 
-    void UIPropertiesPanel::Render(SelectionState& state, std::shared_ptr<BimDocument> document, bool& triggerFocus) {
+    std::shared_ptr<BimDocument> UIPropertiesPanel::FindOwnerDocument(const std::string& guid, const std::vector<std::shared_ptr<BimDocument>>& documents) {
+        for (auto& doc : documents) {
+            for (const auto& sub : doc->GetGeometry().subMeshes) {
+                if (sub.guid == guid) return doc;
+            }
+        }
+        return nullptr;
+    }
+
+    void UIPropertiesPanel::Render(SelectionState& state, std::vector<std::shared_ptr<BimDocument>>& documents, bool& triggerFocus) {
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         const float rightPanelWidth = 450.0f;
 
@@ -117,7 +126,7 @@ namespace BimCore {
             bool globalRefreshNeeded = false;
 
             if (state.objects.size() > 1) {
-                DrawSharedPropertyTable(state, document, locFilter, sqBtn, globalRefreshNeeded);
+                DrawSharedPropertyTable(state, documents, locFilter, sqBtn, globalRefreshNeeded);
                 ImGui::Spacing();
                 ImGui::Separator();
                 ImGui::Spacing();
@@ -125,9 +134,12 @@ namespace BimCore {
 
             if (globalRefreshNeeded) {
                 for (auto& obj : state.objects) {
-                    obj.properties = document->GetElementProperties(obj.guid);
-                    if (obj.properties.count("Name") && !obj.properties["Name"].value.empty()) {
-                        state.cachedNames[obj.guid] = obj.properties["Name"].value;
+                    auto doc = FindOwnerDocument(obj.guid, documents);
+                    if (doc) {
+                        obj.properties = doc->GetElementProperties(obj.guid);
+                        if (obj.properties.count("Name") && !obj.properties["Name"].value.empty()) {
+                            state.cachedNames[obj.guid] = obj.properties["Name"].value;
+                        }
                     }
                 }
             }
@@ -171,15 +183,17 @@ namespace BimCore {
                     ImGui::SameLine();
                     if (ImGui::Button("Delete Entity")) objToDeleteEntirely = obj.guid;
 
-                    DrawPropertyTable(state, obj, document, locFilter, sqBtn, objNeedsRefresh, propToDelete);
+                    DrawPropertyTable(state, obj, documents, locFilter, sqBtn, objNeedsRefresh, propToDelete);
 
-                    // --- FIXED: If we modified a property, we instantly refresh the cache so the UI updates ---
                     if (objNeedsRefresh) {
-                        obj.properties = document->GetElementProperties(obj.guid);
-                        if (obj.properties.count("Name") && !obj.properties["Name"].value.empty()) {
-                            state.cachedNames[obj.guid] = obj.properties["Name"].value;
-                        } else {
-                            state.cachedNames[obj.guid] = obj.type;
+                        auto doc = FindOwnerDocument(obj.guid, documents);
+                        if (doc) {
+                            obj.properties = doc->GetElementProperties(obj.guid);
+                            if (obj.properties.count("Name") && !obj.properties["Name"].value.empty()) {
+                                state.cachedNames[obj.guid] = obj.properties["Name"].value;
+                            } else {
+                                state.cachedNames[obj.guid] = obj.type;
+                            }
                         }
                     }
 
@@ -207,7 +221,7 @@ namespace BimCore {
         ImGui::End();
     }
 
-    void UIPropertiesPanel::DrawSharedPropertyTable(SelectionState& state, std::shared_ptr<BimDocument> document, const std::string& locFilter, const ImVec2& sqBtn, bool& globalRefreshNeeded) {
+    void UIPropertiesPanel::DrawSharedPropertyTable(SelectionState& state, std::vector<std::shared_ptr<BimDocument>>& documents, const std::string& locFilter, const ImVec2& sqBtn, bool& globalRefreshNeeded) {
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.4f, 0.3f, 0.1f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.45f, 0.35f, 0.15f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.5f, 0.4f, 0.2f, 1.0f));
@@ -273,10 +287,13 @@ namespace BimCore {
 
                             if (enterPressed || confirmPressed) {
                                 for (auto& obj : state.objects) {
-                                    if (state.originalProperties[obj.guid].find(key) == state.originalProperties[obj.guid].end()) {
-                                        state.originalProperties[obj.guid][key] = obj.properties[key].value;
+                                    auto doc = FindOwnerDocument(obj.guid, documents);
+                                    if (doc) {
+                                        if (state.originalProperties[obj.guid].find(key) == state.originalProperties[obj.guid].end()) {
+                                            state.originalProperties[obj.guid][key] = obj.properties[key].value;
+                                        }
+                                        doc->UpdateElementProperty(obj.guid, key, state.editBuffer);
                                     }
-                                    document->UpdateElementProperty(obj.guid, key, state.editBuffer);
                                 }
                                 state.activeEditGuid = "";
                                 globalRefreshNeeded = true;
@@ -304,11 +321,14 @@ namespace BimCore {
                             ImGui::SameLine();
                             if (ImGui::Button(ICON_FA_TRASH, sqBtn)) {
                                 for (auto& obj : state.objects) {
-                                    if (state.originalProperties[obj.guid].find(key) == state.originalProperties[obj.guid].end()) {
-                                        state.originalProperties[obj.guid][key] = obj.properties[key].value;
+                                    auto doc = FindOwnerDocument(obj.guid, documents);
+                                    if (doc) {
+                                        if (state.originalProperties[obj.guid].find(key) == state.originalProperties[obj.guid].end()) {
+                                            state.originalProperties[obj.guid][key] = obj.properties[key].value;
+                                        }
+                                        state.deletedProperties[obj.guid].insert(key);
+                                        doc->UpdateElementProperty(obj.guid, key, "");
                                     }
-                                    state.deletedProperties[obj.guid].insert(key);
-                                    document->UpdateElementProperty(obj.guid, key, "");
                                 }
                                 globalRefreshNeeded = true;
                             }
@@ -322,7 +342,7 @@ namespace BimCore {
         }
     }
 
-    void UIPropertiesPanel::DrawPropertyTable(SelectionState& state, SelectedObject& obj, std::shared_ptr<BimDocument> document, const std::string& locFilter, const ImVec2& sqBtn, bool& objNeedsRefresh, std::string& propToDelete) {
+    void UIPropertiesPanel::DrawPropertyTable(SelectionState& state, SelectedObject& obj, std::vector<std::shared_ptr<BimDocument>>& documents, const std::string& locFilter, const ImVec2& sqBtn, bool& objNeedsRefresh, std::string& propToDelete) {
         if (ImGui::BeginTable("PropTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthStretch, 0.4f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.4f);
@@ -350,22 +370,28 @@ namespace BimCore {
                 if (state.activeEditGuid == obj.guid && state.activeEditKey == key) {
                     if (state.focusEditField) { ImGui::SetKeyboardFocusHere(); state.focusEditField = false; }
                     if (ImGui::InputText("##edit", state.editBuffer, sizeof(state.editBuffer), ImGuiInputTextFlags_EnterReturnsTrue)) {
-                        if (state.originalProperties[obj.guid].find(key) == state.originalProperties[obj.guid].end()) {
-                            state.originalProperties[obj.guid][key] = obj.properties[key].value;
+                        auto doc = FindOwnerDocument(obj.guid, documents);
+                        if (doc) {
+                            if (state.originalProperties[obj.guid].find(key) == state.originalProperties[obj.guid].end()) {
+                                state.originalProperties[obj.guid][key] = obj.properties[key].value;
+                            }
+                            doc->UpdateElementProperty(obj.guid, key, state.editBuffer);
+                            state.activeEditGuid = "";
+                            objNeedsRefresh = true;
                         }
-                        document->UpdateElementProperty(obj.guid, key, state.editBuffer);
-                        state.activeEditGuid = "";
-                        objNeedsRefresh = true;
                     }
 
                     ImGui::TableSetColumnIndex(2);
                     if (ImGui::Button(ICON_FA_CHECK, sqBtn)) {
-                        if (state.originalProperties[obj.guid].find(key) == state.originalProperties[obj.guid].end()) {
-                            state.originalProperties[obj.guid][key] = obj.properties[key].value;
+                        auto doc = FindOwnerDocument(obj.guid, documents);
+                        if (doc) {
+                            if (state.originalProperties[obj.guid].find(key) == state.originalProperties[obj.guid].end()) {
+                                state.originalProperties[obj.guid][key] = obj.properties[key].value;
+                            }
+                            doc->UpdateElementProperty(obj.guid, key, state.editBuffer);
+                            state.activeEditGuid = "";
+                            objNeedsRefresh = true;
                         }
-                        document->UpdateElementProperty(obj.guid, key, state.editBuffer);
-                        state.activeEditGuid = "";
-                        objNeedsRefresh = true;
                     }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Confirm change");
                     ImGui::SameLine();
@@ -388,11 +414,14 @@ namespace BimCore {
                     ImGui::TableSetColumnIndex(2);
                     if (isPropEdited || isPropDeleted) {
                         if (ImGui::Button(ICON_FA_UNDO, sqBtn)) {
-                            std::string orig = state.originalProperties[obj.guid][key];
-                            document->UpdateElementProperty(obj.guid, key, orig);
-                            state.deletedProperties[obj.guid].erase(key);
-                            state.originalProperties[obj.guid].erase(key);
-                            objNeedsRefresh = true;
+                            auto doc = FindOwnerDocument(obj.guid, documents);
+                            if (doc) {
+                                std::string orig = state.originalProperties[obj.guid][key];
+                                doc->UpdateElementProperty(obj.guid, key, orig);
+                                state.deletedProperties[obj.guid].erase(key);
+                                state.originalProperties[obj.guid].erase(key);
+                                objNeedsRefresh = true;
+                            }
                         }
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Undo edit/delete");
                         if (!isPropDeleted) ImGui::SameLine();
@@ -418,13 +447,16 @@ namespace BimCore {
         }
 
         if (!propToDelete.empty()) {
-            if (state.originalProperties[obj.guid].find(propToDelete) == state.originalProperties[obj.guid].end()) {
-                state.originalProperties[obj.guid][propToDelete] = obj.properties[propToDelete].value;
+            auto doc = FindOwnerDocument(obj.guid, documents);
+            if (doc) {
+                if (state.originalProperties[obj.guid].find(propToDelete) == state.originalProperties[obj.guid].end()) {
+                    state.originalProperties[obj.guid][propToDelete] = obj.properties[propToDelete].value;
+                }
+                state.deletedProperties[obj.guid].insert(propToDelete);
+                doc->UpdateElementProperty(obj.guid, propToDelete, "");
+                obj.properties.erase(propToDelete);
+                objNeedsRefresh = true;
             }
-            state.deletedProperties[obj.guid].insert(propToDelete);
-            document->UpdateElementProperty(obj.guid, propToDelete, "");
-            obj.properties.erase(propToDelete);
-            objNeedsRefresh = true;
         }
     }
 
