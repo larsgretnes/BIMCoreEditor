@@ -253,13 +253,14 @@ namespace BimCore {
                 ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - ImGui::GetFrameHeight());
                 ImGui::ColorEdit3("##col", col, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
 
+                // --- FIXED: Restored DragFloat for fine tuning (ALT = slow, SHIFT = fast) ---
                 ImGui::Checkbox("Min", &showMin); ImGui::SameLine();
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                ImGui::SliderFloat("##vmin", &valMin, minB, valMax, "%.2f");
+                ImGui::DragFloat("##vmin", &valMin, 0.05f, minB, valMax, "%.2f");
 
                 ImGui::Checkbox("Max", &showMax); ImGui::SameLine();
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                ImGui::SliderFloat("##vmax", &valMax, valMin, maxB, "%.2f");
+                ImGui::DragFloat("##vmax", &valMax, 0.05f, valMin, maxB, "%.2f");
 
                 ImGui::Separator();
                 ImGui::PopID();

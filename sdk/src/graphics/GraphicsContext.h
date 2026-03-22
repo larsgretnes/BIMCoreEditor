@@ -79,6 +79,7 @@ namespace BimCore {
         void CreateHighlightPipeline();
         void CreateAABBPipeline();
         void CreateGlassPipeline();
+        void CreateStencilPipelines(); // --- NEW ---
         void AllocateGeometryBuffers();
 
     private:
@@ -106,6 +107,8 @@ namespace BimCore {
         WGPURenderPipeline m_highlightOutlinePipeline = nullptr;
         WGPURenderPipeline m_aabbPipeline             = nullptr;
         WGPURenderPipeline m_glassPipeline            = nullptr;
+        WGPURenderPipeline m_stencilMaskPipeline      = nullptr; // --- NEW ---
+        WGPURenderPipeline m_capPipeline              = nullptr; // --- NEW ---
 
         WGPUBuffer m_vertexBuffer = nullptr;
         WGPUBuffer m_indexBuffer  = nullptr;
@@ -116,12 +119,14 @@ namespace BimCore {
         WGPUBuffer m_activeTransparentIndexBuffer = nullptr;
         uint32_t   m_activeTransparentIndexCount  = 0;
 
-        // --- RESTORED: This is the missing buffer! ---
         WGPUBuffer m_lineIndexBuffer            = nullptr;
-
         WGPUBuffer m_aabbVertexBuffer = nullptr;
         WGPUBuffer m_aabbIndexBuffer  = nullptr;
         bool       m_showAABB         = false;
+
+        WGPUBuffer m_capVertexBuffer  = nullptr;
+        WGPUBuffer m_capIndexBuffer   = nullptr;
+        uint32_t   m_capIndexCount    = 0;
 
         WGPUBuffer m_glassVertexBuffer = nullptr;
         WGPUBuffer m_glassIndexBuffer  = nullptr;

@@ -90,7 +90,8 @@ namespace BimCore {
         float                           planeColorZ[3]     = { 0.2f, 0.5f, 1.0f };
 
         int                             style              = 0;
-        glm::vec4                       color              {1.0f, 0.5f, 0.0f, 0.5f};
+
+        glm::vec4                       color              {1.0f, 0.0f, 0.0f, 0.5f};
 
         std::string                     activeEditGuid     = "";
         std::string                     activeEditKey      = "";

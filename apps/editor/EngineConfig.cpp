@@ -40,8 +40,9 @@ namespace BimCore {
         } else {
             std::cout << "[Config] settings.ini not found, writing default configuration...\n";
 
-            ini["App"]["AutoLoadPath"] = "../../test.ifc";
-            AutoLoadPath = "../../test.ifc";
+            // --- FIXED: Updated AutoLoadPath ---
+            ini["App"]["AutoLoadPath"] = "../test.ifc";
+            AutoLoadPath = "../test.ifc";
 
             ini["Controls"]["CadPanSpeed"] = std::to_string(CadPanSpeed);
             ini["Controls"]["CadOrbitSpeed"] = std::to_string(CadOrbitSpeed);

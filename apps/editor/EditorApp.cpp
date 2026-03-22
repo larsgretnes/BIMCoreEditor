@@ -407,11 +407,15 @@ namespace BimCore {
                                       glm::vec3(m_document->GetGeometry().maxBounds[0], m_document->GetGeometry().maxBounds[1], m_document->GetGeometry().maxBounds[2])
         );
 
+        // ... (inside void EditorApp::Render()) ...
+
         SceneUniforms scene{};
         scene.viewProjection = m_camera->GetViewProjectionMatrix();
         scene.lightingMode = m_currentLightMode;
         scene.highlightColor = m_uiSystem.state.color;
 
+        // --- FIXED: Clipping math is ALWAYS active. ---
+        // (The checkboxes only control the m_graphics->SetClippingPlanes call above)
         scene.clipActiveMin = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
         scene.clipActiveMax = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
 

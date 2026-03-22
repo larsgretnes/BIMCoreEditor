@@ -45,24 +45,26 @@ namespace BimCore {
         CreateHighlightPipeline();
         CreateAABBPipeline();
         CreateGlassPipeline();
+        CreateStencilPipelines();
         AllocateGeometryBuffers();
         BIM_LOG("GPU", "Graphics context fully initialised.");
     }
 
     GraphicsContext::~GraphicsContext() {
+        if (m_capIndexBuffer)                wgpuBufferRelease(m_capIndexBuffer);
+        if (m_capVertexBuffer)               wgpuBufferRelease(m_capVertexBuffer);
         if (m_glassIndexBuffer)              wgpuBufferRelease(m_glassIndexBuffer);
         if (m_glassVertexBuffer)             wgpuBufferRelease(m_glassVertexBuffer);
         if (m_aabbIndexBuffer)               wgpuBufferRelease(m_aabbIndexBuffer);
         if (m_aabbVertexBuffer)              wgpuBufferRelease(m_aabbVertexBuffer);
-
-        // --- RESTORED ---
         if (m_lineIndexBuffer)               wgpuBufferRelease(m_lineIndexBuffer);
-
         if (m_activeTransparentIndexBuffer)  wgpuBufferRelease(m_activeTransparentIndexBuffer);
         if (m_activeIndexBuffer)             wgpuBufferRelease(m_activeIndexBuffer);
         if (m_indexBuffer)                   wgpuBufferRelease(m_indexBuffer);
         if (m_vertexBuffer)                  wgpuBufferRelease(m_vertexBuffer);
 
+        if (m_capPipeline)                   wgpuRenderPipelineRelease(m_capPipeline);
+        if (m_stencilMaskPipeline)           wgpuRenderPipelineRelease(m_stencilMaskPipeline);
         if (m_glassPipeline)                 wgpuRenderPipelineRelease(m_glassPipeline);
         if (m_aabbPipeline)                  wgpuRenderPipelineRelease(m_aabbPipeline);
         if (m_highlightOutlinePipeline)      wgpuRenderPipelineRelease(m_highlightOutlinePipeline);
@@ -175,7 +177,7 @@ namespace BimCore {
         desc.usage         = WGPUTextureUsage_RenderAttachment;
         desc.dimension     = WGPUTextureDimension_2D;
         desc.size          = { m_width, m_height, 1 };
-        desc.format        = WGPUTextureFormat_Depth32Float;
+        desc.format        = WGPUTextureFormat_Depth24PlusStencil8;
         desc.mipLevelCount = 1;
         desc.sampleCount   = 1;
         m_depthTexture = wgpuDeviceCreateTexture(m_device, &desc);
@@ -272,7 +274,7 @@ namespace BimCore {
         WGPUVertexBufferLayout vbl = MakeVertexBufferLayout(attrs);
 
         WGPUDepthStencilState ds = {};
-        ds.format             = WGPUTextureFormat_Depth32Float;
+        ds.format             = WGPUTextureFormat_Depth24PlusStencil8;
         ds.depthWriteEnabled  = WGPUOptionalBool_True;
         ds.depthCompare       = WGPUCompareFunction_Less;
 
@@ -355,10 +357,7 @@ namespace BimCore {
         target.writeMask = WGPUColorWriteMask_All;
 
         WGPUDepthStencilState ds = {};
-        ds.format = WGPUTextureFormat_Depth32Float;
-
-        // --- X-RAY MAGIC ---
-        // Setting depthCompare to Always means the highlight completely ignores walls and draws over everything!
+        ds.format = WGPUTextureFormat_Depth24PlusStencil8;
         ds.depthCompare = WGPUCompareFunction_Always;
         ds.depthWriteEnabled = WGPUOptionalBool_False;
 
@@ -372,7 +371,6 @@ namespace BimCore {
         pd.multisample.count = 1;
         pd.multisample.mask = ~0u;
 
-        // --- Style 0: Solid Ghost Highlight ---
         WGPUShaderModule solidShader = CreateShaderModule(Shaders::kHighlightSolidWGSL);
         WGPUFragmentState fragSolid = {};
         fragSolid.module = solidShader;
@@ -386,7 +384,6 @@ namespace BimCore {
         pd.primitive.cullMode = WGPUCullMode_Back;
         m_highlightSolidPipeline = wgpuDeviceCreateRenderPipeline(m_device, &pd);
 
-        // --- Style 1: Wireframe Line Outline ---
         WGPUShaderModule outlineShader = CreateShaderModule(Shaders::kHighlightOutlineWGSL);
         WGPUFragmentState fragOutline = {};
         fragOutline.module = outlineShader;
@@ -425,7 +422,7 @@ namespace BimCore {
 
         WGPUColorTargetState target = {}; target.format = m_surfaceFormat; target.writeMask = WGPUColorWriteMask_All;
         WGPUFragmentState frag = {}; frag.module = shader; frag.entryPoint = WGPUStringView{ "fs_main", 7 }; frag.targetCount = 1; frag.targets = &target;
-        WGPUDepthStencilState ds = {}; ds.format = WGPUTextureFormat_Depth32Float;
+        WGPUDepthStencilState ds = {}; ds.format = WGPUTextureFormat_Depth24PlusStencil8;
         ds.depthCompare = WGPUCompareFunction_LessEqual; ds.depthWriteEnabled = WGPUOptionalBool_False;
 
         WGPURenderPipelineDescriptor pd = {};
@@ -463,9 +460,13 @@ namespace BimCore {
         blend.color = { WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha };
         blend.alpha = { WGPUBlendOperation_Add, WGPUBlendFactor_One,      WGPUBlendFactor_OneMinusSrcAlpha };
         WGPUColorTargetState target = {}; target.format = m_surfaceFormat; target.blend = &blend; target.writeMask = WGPUColorWriteMask_All;
+
+        WGPUDepthStencilState ds = {};
+        ds.format = WGPUTextureFormat_Depth24PlusStencil8;
+        ds.depthCompare = WGPUCompareFunction_Less;
+        ds.depthWriteEnabled = WGPUOptionalBool_False;
+
         WGPUFragmentState frag = {}; frag.module = shader; frag.entryPoint = WGPUStringView{ "fs_main", 7 }; frag.targetCount = 1; frag.targets = &target;
-        WGPUDepthStencilState ds = {}; ds.format = WGPUTextureFormat_Depth32Float;
-        ds.depthCompare = WGPUCompareFunction_LessEqual; ds.depthWriteEnabled = WGPUOptionalBool_False;
 
         WGPURenderPipelineDescriptor pd = {};
         pd.layout = layout; pd.vertex.module = shader;
@@ -482,6 +483,106 @@ namespace BimCore {
         wgpuPipelineLayoutRelease(layout);
     }
 
+    void GraphicsContext::CreateStencilPipelines() {
+        WGPUShaderModule maskShader = CreateShaderModule(Shaders::kMaskWGSL);
+        WGPUShaderModule capShader  = CreateShaderModule(Shaders::kCapWGSL);
+
+        WGPUBindGroupLayoutEntry bgle[2] = {};
+        bgle[0].binding = 0; bgle[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+        bgle[0].buffer.type = WGPUBufferBindingType_Uniform; bgle[0].buffer.minBindingSize = sizeof(SceneUniforms);
+        bgle[1].binding = 1; bgle[1].visibility = WGPUShaderStage_Vertex;
+        bgle[1].buffer.type = WGPUBufferBindingType_ReadOnlyStorage; bgle[1].buffer.minBindingSize = sizeof(glm::mat4);
+
+        WGPUBindGroupLayoutDescriptor bgld = {}; bgld.entryCount = 2; bgld.entries = bgle;
+        WGPUBindGroupLayout bgl = wgpuDeviceCreateBindGroupLayout(m_device, &bgld);
+        WGPUPipelineLayoutDescriptor pld = {}; pld.bindGroupLayoutCount = 1; pld.bindGroupLayouts = &bgl;
+        WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(m_device, &pld);
+
+        std::vector<WGPUVertexAttribute> attrs;
+        WGPUVertexBufferLayout vbl = MakeVertexBufferLayout(attrs);
+
+        WGPUDepthStencilState maskDs = {};
+        maskDs.format = WGPUTextureFormat_Depth24PlusStencil8;
+        maskDs.depthWriteEnabled = WGPUOptionalBool_False;
+        maskDs.depthCompare = WGPUCompareFunction_Less;
+
+        WGPUStencilFaceState backFace = {};
+        backFace.compare = WGPUCompareFunction_Always;
+        backFace.failOp = WGPUStencilOperation_Keep;
+        backFace.depthFailOp = WGPUStencilOperation_Keep;
+        backFace.passOp = WGPUStencilOperation_Replace;
+
+        maskDs.stencilFront = backFace;
+        maskDs.stencilBack = backFace;
+        maskDs.stencilReadMask = 0xFF;
+        maskDs.stencilWriteMask = 0xFF;
+
+        WGPUColorTargetState dummyTarget = {};
+        dummyTarget.format = m_surfaceFormat;
+        dummyTarget.writeMask = WGPUColorWriteMask_None;
+
+        WGPUFragmentState maskFrag = {};
+        maskFrag.module = maskShader;
+        maskFrag.entryPoint = WGPUStringView{"fs_main", 7};
+        maskFrag.targetCount = 1;
+        maskFrag.targets = &dummyTarget;
+
+        WGPURenderPipelineDescriptor pdMask = {};
+        pdMask.layout = layout;
+        pdMask.vertex.module = maskShader;
+        pdMask.vertex.entryPoint = WGPUStringView{"vs_main", 7};
+        pdMask.vertex.bufferCount = 1;
+        pdMask.vertex.buffers = &vbl;
+        pdMask.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+        pdMask.primitive.cullMode = WGPUCullMode_Front;
+        pdMask.primitive.frontFace = WGPUFrontFace_CCW;
+        pdMask.depthStencil = &maskDs;
+        pdMask.fragment = &maskFrag;
+        pdMask.multisample.count = 1;
+        pdMask.multisample.mask = ~0u;
+
+        m_stencilMaskPipeline = wgpuDeviceCreateRenderPipeline(m_device, &pdMask);
+
+        WGPUDepthStencilState capDs = {};
+        capDs.format = WGPUTextureFormat_Depth24PlusStencil8;
+        capDs.depthWriteEnabled = WGPUOptionalBool_True;
+        capDs.depthCompare = WGPUCompareFunction_Always;
+
+        WGPUStencilFaceState capFace = {};
+        capFace.compare = WGPUCompareFunction_Equal;
+        capFace.failOp = WGPUStencilOperation_Keep;
+        capFace.depthFailOp = WGPUStencilOperation_Keep;
+        capFace.passOp = WGPUStencilOperation_Keep;
+
+        capDs.stencilFront = capFace;
+        capDs.stencilBack = capFace;
+        capDs.stencilReadMask = 0xFF;
+        capDs.stencilWriteMask = 0xFF;
+
+        WGPUColorTargetState capTarget = {};
+        capTarget.format = m_surfaceFormat;
+        capTarget.writeMask = WGPUColorWriteMask_All;
+
+        WGPUFragmentState capFrag = {};
+        capFrag.module = capShader;
+        capFrag.entryPoint = WGPUStringView{"fs_main", 7};
+        capFrag.targetCount = 1;
+        capFrag.targets = &capTarget;
+
+        WGPURenderPipelineDescriptor pdCap = pdMask;
+        pdCap.vertex.module = capShader;
+        pdCap.fragment = &capFrag;
+        pdCap.depthStencil = &capDs;
+        pdCap.primitive.cullMode = WGPUCullMode_None;
+
+        m_capPipeline = wgpuDeviceCreateRenderPipeline(m_device, &pdCap);
+
+        wgpuShaderModuleRelease(maskShader);
+        wgpuShaderModuleRelease(capShader);
+        wgpuBindGroupLayoutRelease(bgl);
+        wgpuPipelineLayoutRelease(layout);
+    }
+
     void GraphicsContext::AllocateGeometryBuffers() {
         WGPUBufferDescriptor avbd = {}; avbd.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Vertex; avbd.size = 8 * sizeof(Vertex);
         m_aabbVertexBuffer = wgpuDeviceCreateBuffer(m_device, &avbd);
@@ -490,6 +591,12 @@ namespace BimCore {
         WGPUBufferDescriptor aibd = {}; aibd.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Index; aibd.size = sizeof(kAABBIndices);
         m_aabbIndexBuffer = wgpuDeviceCreateBuffer(m_device, &aibd);
         wgpuQueueWriteBuffer(m_queue, m_aabbIndexBuffer, 0, kAABBIndices, sizeof(kAABBIndices));
+
+        // --- NEW: Cap Buffers ---
+        WGPUBufferDescriptor cvbd = {}; cvbd.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Vertex; cvbd.size = 24 * sizeof(Vertex);
+        m_capVertexBuffer = wgpuDeviceCreateBuffer(m_device, &cvbd);
+        WGPUBufferDescriptor cibd = {}; cibd.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Index; cibd.size = 36 * sizeof(uint32_t);
+        m_capIndexBuffer = wgpuDeviceCreateBuffer(m_device, &cibd);
 
         WGPUBufferDescriptor gvbd = {}; gvbd.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Vertex; gvbd.size = 24 * sizeof(Vertex);
         m_glassVertexBuffer = wgpuDeviceCreateBuffer(m_device, &gvbd);
@@ -517,8 +624,6 @@ namespace BimCore {
         if (m_indexBuffer)  { wgpuBufferRelease(m_indexBuffer);  m_indexBuffer  = nullptr; }
         if (m_activeIndexBuffer) { wgpuBufferRelease(m_activeIndexBuffer); m_activeIndexBuffer = nullptr; }
         if (m_activeTransparentIndexBuffer) { wgpuBufferRelease(m_activeTransparentIndexBuffer); m_activeTransparentIndexBuffer = nullptr; }
-
-        // --- RESTORED: Line Index Buffer generator ---
         if (m_lineIndexBuffer) { wgpuBufferRelease(m_lineIndexBuffer); m_lineIndexBuffer = nullptr; }
 
         auto makeBuffer = [&](WGPUBufferUsage usage, const void* data, size_t byteSize) {
@@ -543,7 +648,6 @@ namespace BimCore {
             m_activeTransparentIndexCount = 0;
         }
 
-        // --- RESTORED: Create 2 indices for every edge to map perfectly with the triangle start/count indexes ---
         std::vector<uint32_t> lineIndices;
         lineIndices.reserve(indices.size() * 2);
         for (size_t i = 0; i + 2 < indices.size(); i += 3) {
@@ -619,47 +723,66 @@ namespace BimCore {
         bool actZMin, float zMin, bool actZMax, float zMax, const float* colZ,
         const glm::vec3& minB, const glm::vec3& maxB)
     {
-        std::vector<Vertex>   verts;
-        std::vector<uint32_t> inds;
-        verts.reserve(24);
-        inds.reserve(36);
+        // --- FIXED: Build distinct buffers for Cap (always) and Glass (checkbox-based) ---
+        std::vector<Vertex>   glassVerts, capVerts;
+        std::vector<uint32_t> glassInds, capInds;
+        glassVerts.reserve(24); glassInds.reserve(36);
+        capVerts.reserve(24); capInds.reserve(36);
 
         const glm::vec3 minP = minB - glm::vec3(2.0f);
         const glm::vec3 maxP = maxB + glm::vec3(2.0f);
 
-        auto addPlane = [&](float px, float py, float pz, float nx, float ny, float nz, float cr, float cg, float cb) {
-            uint32_t i = static_cast<uint32_t>(verts.size());
-            Vertex v = {}; v.normal[0]=nx; v.normal[1]=ny; v.normal[2]=nz; v.color[0]=cr; v.color[1]=cg; v.color[2]=cb;
-            if (nx != 0.0f) {
-                v.position[0]=px; v.position[1]=minP.y; v.position[2]=minP.z; verts.push_back(v);
-                v.position[0]=px; v.position[1]=maxP.y; v.position[2]=minP.z; verts.push_back(v);
-                v.position[0]=px; v.position[1]=maxP.y; v.position[2]=maxP.z; verts.push_back(v);
-                v.position[0]=px; v.position[1]=minP.y; v.position[2]=maxP.z; verts.push_back(v);
-            } else if (ny != 0.0f) {
-                v.position[0]=minP.x; v.position[1]=py; v.position[2]=minP.z; verts.push_back(v);
-                v.position[0]=maxP.x; v.position[1]=py; v.position[2]=minP.z; verts.push_back(v);
-                v.position[0]=maxP.x; v.position[1]=py; v.position[2]=maxP.z; verts.push_back(v);
-                v.position[0]=minP.x; v.position[1]=py; v.position[2]=maxP.z; verts.push_back(v);
-            } else {
-                v.position[0]=minP.x; v.position[1]=minP.y; v.position[2]=pz; verts.push_back(v);
-                v.position[0]=maxP.x; v.position[1]=minP.y; v.position[2]=pz; verts.push_back(v);
-                v.position[0]=maxP.x; v.position[1]=maxP.y; v.position[2]=pz; verts.push_back(v);
-                v.position[0]=minP.x; v.position[1]=maxP.y; v.position[2]=pz; verts.push_back(v);
+        auto addPlane = [&](float px, float py, float pz, float nx, float ny, float nz, float cr, float cg, float cb, bool activeForGlass) {
+            Vertex v[4] = {};
+            for(int i=0; i<4; ++i) {
+                v[i].normal[0]=nx; v[i].normal[1]=ny; v[i].normal[2]=nz;
+                v[i].color[0]=cr; v[i].color[1]=cg; v[i].color[2]=cb;
             }
-            inds.insert(inds.end(), {i, i+1, i+2, i, i+2, i+3});
+            if (nx != 0.0f) {
+                v[0].position[0]=px; v[0].position[1]=minP.y; v[0].position[2]=minP.z;
+                v[1].position[0]=px; v[1].position[1]=maxP.y; v[1].position[2]=minP.z;
+                v[2].position[0]=px; v[2].position[1]=maxP.y; v[2].position[2]=maxP.z;
+                v[3].position[0]=px; v[3].position[1]=minP.y; v[3].position[2]=maxP.z;
+            } else if (ny != 0.0f) {
+                v[0].position[0]=minP.x; v[0].position[1]=py; v[0].position[2]=minP.z;
+                v[1].position[0]=maxP.x; v[1].position[1]=py; v[1].position[2]=minP.z;
+                v[2].position[0]=maxP.x; v[2].position[1]=py; v[2].position[2]=maxP.z;
+                v[3].position[0]=minP.x; v[3].position[1]=py; v[3].position[2]=maxP.z;
+            } else {
+                v[0].position[0]=minP.x; v[0].position[1]=minP.y; v[0].position[2]=pz;
+                v[1].position[0]=maxP.x; v[1].position[1]=minP.y; v[1].position[2]=pz;
+                v[2].position[0]=maxP.x; v[2].position[1]=maxP.y; v[2].position[2]=pz;
+                v[3].position[0]=minP.x; v[3].position[1]=maxP.y; v[3].position[2]=pz;
+            }
+
+            uint32_t ci = static_cast<uint32_t>(capVerts.size());
+            capVerts.insert(capVerts.end(), {v[0], v[1], v[2], v[3]});
+            capInds.insert(capInds.end(), {ci, ci+1, ci+2, ci, ci+2, ci+3});
+
+            if (activeForGlass) {
+                uint32_t gi = static_cast<uint32_t>(glassVerts.size());
+                glassVerts.insert(glassVerts.end(), {v[0], v[1], v[2], v[3]});
+                glassInds.insert(glassInds.end(), {gi, gi+1, gi+2, gi, gi+2, gi+3});
+            }
         };
 
-        if (actXMin) addPlane(xMin+0.001f, 0, 0,  1,0,0, colX[0], colX[1], colX[2]);
-        if (actXMax) addPlane(xMax-0.001f, 0, 0, -1,0,0, colX[0], colX[1], colX[2]);
-        if (actYMin) addPlane(0, yMin+0.001f, 0,  0,1,0, colY[0], colY[1], colY[2]);
-        if (actYMax) addPlane(0, yMax-0.001f, 0,  0,-1,0, colY[0], colY[1], colY[2]);
-        if (actZMin) addPlane(0, 0, zMin+0.001f,  0,0,1, colZ[0], colZ[1], colZ[2]);
-        if (actZMax) addPlane(0, 0, zMax-0.001f,  0,0,-1, colZ[0], colZ[1], colZ[2]);
+        addPlane(xMin+0.001f, 0, 0,  1,0,0, colX[0], colX[1], colX[2], actXMin);
+        addPlane(xMax-0.001f, 0, 0, -1,0,0, colX[0], colX[1], colX[2], actXMax);
+        addPlane(0, yMin+0.001f, 0,  0,1,0, colY[0], colY[1], colY[2], actYMin);
+        addPlane(0, yMax-0.001f, 0,  0,-1,0, colY[0], colY[1], colY[2], actYMax);
+        addPlane(0, 0, zMin+0.001f,  0,0,1, colZ[0], colZ[1], colZ[2], actZMin);
+        addPlane(0, 0, zMax-0.001f,  0,0,-1, colZ[0], colZ[1], colZ[2], actZMax);
 
-        m_glassIndexCount = static_cast<uint32_t>(inds.size());
-        if (m_glassIndexCount > 0) {
-            wgpuQueueWriteBuffer(m_queue, m_glassVertexBuffer, 0, verts.data(), verts.size()*sizeof(Vertex));
-            wgpuQueueWriteBuffer(m_queue, m_glassIndexBuffer,  0, inds.data(),  inds.size()*sizeof(uint32_t));
+        m_capIndexCount = static_cast<uint32_t>(capInds.size());
+        if (m_capIndexCount > 0 && m_capVertexBuffer && m_capIndexBuffer) {
+            wgpuQueueWriteBuffer(m_queue, m_capVertexBuffer, 0, capVerts.data(), capVerts.size()*sizeof(Vertex));
+            wgpuQueueWriteBuffer(m_queue, m_capIndexBuffer,  0, capInds.data(),  capInds.size()*sizeof(uint32_t));
+        }
+
+        m_glassIndexCount = static_cast<uint32_t>(glassInds.size());
+        if (m_glassIndexCount > 0 && m_glassVertexBuffer && m_glassIndexBuffer) {
+            wgpuQueueWriteBuffer(m_queue, m_glassVertexBuffer, 0, glassVerts.data(), glassVerts.size()*sizeof(Vertex));
+            wgpuQueueWriteBuffer(m_queue, m_glassIndexBuffer,  0, glassInds.data(),  glassInds.size()*sizeof(uint32_t));
         }
     }
 
@@ -683,6 +806,10 @@ namespace BimCore {
         depthAtt.depthLoadOp       = WGPULoadOp_Clear;
         depthAtt.depthStoreOp      = WGPUStoreOp_Store;
 
+        depthAtt.stencilClearValue = 0;
+        depthAtt.stencilLoadOp     = WGPULoadOp_Clear;
+        depthAtt.stencilStoreOp    = WGPUStoreOp_Store;
+
         WGPURenderPassDescriptor rpDesc = {};
         rpDesc.colorAttachmentCount      = 1;
         rpDesc.colorAttachments          = &colorAtt;
@@ -691,6 +818,7 @@ namespace BimCore {
         WGPURenderPassEncoder rp = wgpuCommandEncoderBeginRenderPass(encoder, &rpDesc);
         wgpuRenderPassEncoderSetBindGroup(rp, 0, m_sceneBindGroup, 0, nullptr);
 
+        // Pass 1 - Draw OPAQUE geometry first so the depth buffer is fully primed!
         if (m_vertexBuffer && m_activeIndexBuffer && m_activeIndexCount > 0) {
             wgpuRenderPassEncoderSetPipeline(rp, m_pipeline);
             wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_vertexBuffer, 0, WGPU_WHOLE_SIZE);
@@ -698,6 +826,25 @@ namespace BimCore {
             wgpuRenderPassEncoderDrawIndexed(rp, m_activeIndexCount, 1, 0, 0, 0);
         }
 
+        // Pass 2 - Draw MASK pass (Cull Front). Uses the depth buffer from Pass 1 to find sliced holes.
+        if (m_vertexBuffer && m_activeIndexBuffer && m_activeIndexCount > 0) {
+            wgpuRenderPassEncoderSetPipeline(rp, m_stencilMaskPipeline);
+            wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_vertexBuffer, 0, WGPU_WHOLE_SIZE);
+            wgpuRenderPassEncoderSetIndexBuffer(rp, m_activeIndexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+            wgpuRenderPassEncoderSetStencilReference(rp, 1);
+            wgpuRenderPassEncoderDrawIndexed(rp, m_activeIndexCount, 1, 0, 0, 0);
+        }
+
+        // --- FIXED: Pass 3 - Draw SOLID CAP inside the masked holes using independent Cap Buffer ---
+        if (m_capIndexCount > 0 && m_capVertexBuffer && m_capIndexBuffer) {
+            wgpuRenderPassEncoderSetPipeline(rp, m_capPipeline);
+            wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_capVertexBuffer, 0, WGPU_WHOLE_SIZE);
+            wgpuRenderPassEncoderSetIndexBuffer(rp, m_capIndexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+            wgpuRenderPassEncoderSetStencilReference(rp, 1);
+            wgpuRenderPassEncoderDrawIndexed(rp, m_capIndexCount, 1, 0, 0, 0);
+        }
+
+        // Pass 4 - Transparent Geometry
         if (m_vertexBuffer && m_activeTransparentIndexBuffer && m_activeTransparentIndexCount > 0) {
             wgpuRenderPassEncoderSetPipeline(rp, m_transparentPipeline);
             wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_vertexBuffer, 0, WGPU_WHOLE_SIZE);
@@ -705,14 +852,20 @@ namespace BimCore {
             wgpuRenderPassEncoderDrawIndexed(rp, m_activeTransparentIndexCount, 1, 0, 0, 0);
         }
 
+        // Pass 5 - Glass Clipping Planes (Visual indicator based on UI Checkboxes)
+        if (m_glassIndexCount > 0 && m_glassVertexBuffer && m_glassIndexBuffer) {
+            wgpuRenderPassEncoderSetPipeline(rp, m_glassPipeline);
+            wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_glassVertexBuffer, 0, WGPU_WHOLE_SIZE);
+            wgpuRenderPassEncoderSetIndexBuffer(rp, m_glassIndexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+            wgpuRenderPassEncoderDrawIndexed(rp, m_glassIndexCount, 1, 0, 0, 0);
+        }
+
         if (m_hasHighlight && !m_highlightRanges.empty() && m_vertexBuffer) {
-            // --- NEW: Render X-Ray lines or solid ghost ---
             if (m_highlightStyle == 1 && m_lineIndexBuffer) {
                 wgpuRenderPassEncoderSetPipeline(rp, m_highlightOutlinePipeline);
                 wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_vertexBuffer, 0, WGPU_WHOLE_SIZE);
                 wgpuRenderPassEncoderSetIndexBuffer(rp, m_lineIndexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
                 for (const auto& range : m_highlightRanges) {
-                    // Multiply index count and start by 2 because lines have 2 indices per 1 triangle edge
                     wgpuRenderPassEncoderDrawIndexed(rp, range.indexCount * 2, 1, range.startIndex * 2, 0, 0);
                 }
             } else if (m_highlightStyle == 0 && m_indexBuffer) {
@@ -730,13 +883,6 @@ namespace BimCore {
             wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_aabbVertexBuffer, 0, WGPU_WHOLE_SIZE);
             wgpuRenderPassEncoderSetIndexBuffer(rp, m_aabbIndexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
             wgpuRenderPassEncoderDrawIndexed(rp, 24, 1, 0, 0, 0);
-        }
-
-        if (m_glassIndexCount > 0 && m_glassVertexBuffer && m_glassIndexBuffer) {
-            wgpuRenderPassEncoderSetPipeline(rp, m_glassPipeline);
-            wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_glassVertexBuffer, 0, WGPU_WHOLE_SIZE);
-            wgpuRenderPassEncoderSetIndexBuffer(rp, m_glassIndexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
-            wgpuRenderPassEncoderDrawIndexed(rp, m_glassIndexCount, 1, 0, 0, 0);
         }
 
         ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), rp);
@@ -775,7 +921,7 @@ namespace BimCore {
         wgpuInfo.Device              = m_device;
         wgpuInfo.NumFramesInFlight   = 3;
         wgpuInfo.RenderTargetFormat  = m_surfaceFormat;
-        wgpuInfo.DepthStencilFormat  = WGPUTextureFormat_Depth32Float;
+        wgpuInfo.DepthStencilFormat  = WGPUTextureFormat_Depth24PlusStencil8;
         ImGui_ImplWGPU_Init(&wgpuInfo);
     }
 
