@@ -7,6 +7,7 @@
 #include <glm/glm.hpp>
 #include <vector>
 #include <cstdint>
+#include <string>
 
 struct GLFWwindow;
 struct ImDrawData;
@@ -20,15 +21,18 @@ namespace BimCore {
     };
 
     struct SceneUniforms {
-        glm::mat4 viewProjection;   // 64 bytes  offset 0
-        glm::vec4 sunDirection;     // 16 bytes  offset 64
-        glm::vec4 highlightColor;   // 16 bytes  offset 80
-        glm::vec4 clipMin;          // 16 bytes  offset 96
-        glm::vec4 clipMax;          // 16 bytes  offset 112
-        glm::vec4 clipActiveMin;    // 16 bytes  offset 128
-        glm::vec4 clipActiveMax;    // 16 bytes  offset 144
-        uint32_t  lightingMode;     //  4 bytes  offset 160
-        uint32_t  _pad[3];          // 12 bytes  offset 164
+        glm::mat4 viewProjection;       // offset 0   (64 bytes)
+        glm::mat4 invViewProjection;    // offset 64  (64 bytes)
+        glm::vec4 sunDirection;         // offset 128 (16 bytes)
+        glm::vec4 highlightColor;       // offset 144 (16 bytes)
+        glm::vec4 clipMin;              // offset 160 (16 bytes)
+        glm::vec4 clipMax;              // offset 176 (16 bytes)
+        glm::vec4 clipActiveMin;        // offset 192 (16 bytes)
+        glm::vec4 clipActiveMax;        // offset 208 (16 bytes)
+        uint32_t  lightingMode;         // offset 224 (4 bytes)
+        uint32_t  screenWidth;          // offset 228 (4 bytes)
+        uint32_t  screenHeight;         // offset 232 (4 bytes)
+        uint32_t  _pad;                 // offset 236 (4 bytes)
     };
 
     struct HighlightRange {
@@ -70,16 +74,18 @@ namespace BimCore {
         void CreateSurface(GLFWwindow* window);
         void RequestAdapterAndDevice();
         void ConfigureSurface();
-        void CreateDepthTexture();
-        void ReleaseDepthTexture();
         void CreateUniformBuffers();
 
-        WGPUShaderModule CreateShaderModule(const char* wgsl) const;
+        void CreateRenderTargets();
+        void ReleaseRenderTargets();
+
+        WGPUShaderModule CreateShaderModule(const std::string& source) const;
         void CreateMainPipeline();
         void CreateHighlightPipeline();
         void CreateAABBPipeline();
         void CreateGlassPipeline();
-        void CreateStencilPipelines(); // --- NEW ---
+        void CreateStencilPipelines();
+        void CreateSSAOPipeline();
         void AllocateGeometryBuffers();
 
     private:
@@ -93,13 +99,22 @@ namespace BimCore {
         uint32_t           m_width    = 0;
         uint32_t           m_height   = 0;
 
-        WGPUTexture        m_depthTexture = nullptr;
-        WGPUTextureView    m_depthView    = nullptr;
+        WGPUTexture        m_offscreenTexture = nullptr;
+        WGPUTextureView    m_offscreenView    = nullptr;
+        WGPUTexture        m_depthTexture     = nullptr;
+        WGPUTextureView    m_depthView        = nullptr;
+        WGPUTextureView    m_depthReadView    = nullptr;
 
         WGPUBuffer         m_uniformBuffer  = nullptr;
         WGPUBuffer         m_instanceBuffer = nullptr;
         uint32_t           m_instanceCount  = 0;
-        WGPUBindGroup      m_sceneBindGroup = nullptr;
+
+        WGPUBindGroupLayout m_sceneBindGroupLayout = nullptr;
+        WGPUBindGroup       m_sceneBindGroup       = nullptr;
+
+        WGPUBindGroupLayout m_ssaoBindGroupLayout = nullptr;
+        WGPUBindGroup       m_ssaoBindGroup       = nullptr;
+        WGPURenderPipeline  m_ssaoPipeline        = nullptr;
 
         WGPURenderPipeline m_pipeline            = nullptr;
         WGPURenderPipeline m_transparentPipeline = nullptr;
@@ -107,8 +122,8 @@ namespace BimCore {
         WGPURenderPipeline m_highlightOutlinePipeline = nullptr;
         WGPURenderPipeline m_aabbPipeline             = nullptr;
         WGPURenderPipeline m_glassPipeline            = nullptr;
-        WGPURenderPipeline m_stencilMaskPipeline      = nullptr; // --- NEW ---
-        WGPURenderPipeline m_capPipeline              = nullptr; // --- NEW ---
+        WGPURenderPipeline m_stencilMaskPipeline      = nullptr;
+        WGPURenderPipeline m_capPipeline              = nullptr;
 
         WGPUBuffer m_vertexBuffer = nullptr;
         WGPUBuffer m_indexBuffer  = nullptr;

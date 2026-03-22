@@ -407,15 +407,22 @@ namespace BimCore {
                                       glm::vec3(m_document->GetGeometry().maxBounds[0], m_document->GetGeometry().maxBounds[1], m_document->GetGeometry().maxBounds[2])
         );
 
-        // ... (inside void EditorApp::Render()) ...
+        // ... (Inside void EditorApp::Render()) ...
 
         SceneUniforms scene{};
         scene.viewProjection = m_camera->GetViewProjectionMatrix();
+
+        // --- NEW: SSAO Math Requirements ---
+        scene.invViewProjection = glm::inverse(scene.viewProjection);
+        scene.screenWidth = m_window->GetWidth();
+        scene.screenHeight = m_window->GetHeight();
+
         scene.lightingMode = m_currentLightMode;
         scene.highlightColor = m_uiSystem.state.color;
 
-        // --- FIXED: Clipping math is ALWAYS active. ---
-        // (The checkboxes only control the m_graphics->SetClippingPlanes call above)
+        // Let the shader know the sun direction so normal lighting continues to work
+        scene.sunDirection = glm::vec4(normalize(glm::vec3(0.5f, 0.8f, 0.3f)), 0.0f);
+
         scene.clipActiveMin = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
         scene.clipActiveMax = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
 
