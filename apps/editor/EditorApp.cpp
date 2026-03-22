@@ -8,9 +8,12 @@
 #include <algorithm>
 #include <thread>
 #include <fstream>
+#include <map>
+#include <filesystem>
 
 #include "scene/IfcExporter.h"
-#include "scene/CsvImporter.h" // --- NEW ---
+#include "scene/CsvImporter.h"
+#include "scene/FormatModules.h"
 #include "platform/portable-file-dialogs.h"
 
 namespace BimCore {
@@ -40,7 +43,6 @@ namespace BimCore {
     bool EditorApp::Initialize() {
         m_config.Load();
 
-        // --- FIXED: Dynamic Window Title ---
         std::string title = m_config.AppName + " v" + m_config.AppVersion;
         m_window = std::make_unique<Window>(m_config.WindowWidth, m_config.WindowHeight, title.c_str());
 
@@ -74,7 +76,7 @@ namespace BimCore {
         m_camera = std::make_unique<Camera>((float)m_config.WindowWidth / (float)m_config.WindowHeight);
         m_uiSystem.state.loadState = &m_globalLoadState;
 
-        if (!m_config.AutoLoadPath.empty()) {
+        if (!m_config.AutoLoadPath.empty() && std::filesystem::exists(m_config.AutoLoadPath)) {
             std::lock_guard<std::mutex> lock(m_loadMutex);
             m_safePendingLoadPath = m_config.AutoLoadPath;
         }
@@ -101,7 +103,14 @@ namespace BimCore {
             if (m_uiSystem.state.triggerResetCamera && m_document) {
                 m_uiSystem.state.triggerResetCamera = false;
                 auto& geom = m_document->GetGeometry();
-                m_camera->FocusOn(glm::vec3(geom.center[0], geom.center[1], geom.center[2]), 50.0f);
+
+                glm::vec3 extents(
+                    geom.maxBounds[0] - geom.minBounds[0],
+                    geom.maxBounds[1] - geom.minBounds[1],
+                    geom.maxBounds[2] - geom.minBounds[2]);
+                float radius = glm::length(extents) * 0.5f;
+
+                m_camera->FocusOn(glm::vec3(geom.center[0], geom.center[1], geom.center[2]), std::max(1.0f, radius));
             }
 
             m_uiSystem.NewFrame();
@@ -119,35 +128,76 @@ namespace BimCore {
                 }
             }
 
-            if (m_uiSystem.state.triggerImportCSV) {
-                m_uiSystem.state.triggerImportCSV = false;
-                auto fileDialog = pfd::open_file("Select CSV to Import", m_currentFileDirectory, { "CSV Files", "*.csv" });
+            if (m_uiSystem.state.triggerImport > 0) {
+                int type = m_uiSystem.state.triggerImport;
+                m_uiSystem.state.triggerImport = 0;
+
+                std::vector<std::string> filters;
+                std::string title;
+                if (type == 1) { title = "Import CSV"; filters = { "CSV Files", "*.csv" }; }
+                else if (type == 2) { title = "Import BCF"; filters = { "BCF Zip Files", "*.bcf", "BCF XML Files", "*.bcfxml" }; }
+                else if (type == 3) { title = "Import glTF"; filters = { "glTF Models", "*.gltf *.glb" }; }
+
+                auto fileDialog = pfd::open_file(title, m_currentFileDirectory, filters);
                 auto files = fileDialog.result();
 
-                if (!files.empty() && m_document) {
-                    // --- FIXED: Calling the modular utility class ---
-                    auto foundGuids = CsvImporter::ExtractGuids(files[0]);
+                if (!files.empty()) {
+                    if (!m_document) {
+                        RenderMesh emptyMesh;
+                        m_document = std::make_shared<BimDocument>(nullptr, emptyMesh, "glTF Import");
+                    }
 
-                    if (!foundGuids.empty()) {
-                        m_uiSystem.state.objects.clear();
-                        for (const auto& sub : m_document->GetGeometry().subMeshes) {
-                            if (foundGuids.count(sub.guid)) {
-                                SelectedObject so;
-                                so.guid = sub.guid;
-                                so.type = sub.type;
-                                so.startIndex = sub.startIndex;
-                                so.indexCount = sub.indexCount;
-                                so.properties = m_document->GetElementProperties(sub.guid);
-                                m_uiSystem.state.objects.push_back(so);
+                    if (type == 1) {
+                        auto foundGuids = CsvImporter::ExtractGuids(files[0]);
+                        if (!foundGuids.empty()) {
+                            m_uiSystem.state.objects.clear();
+                            for (const auto& sub : m_document->GetGeometry().subMeshes) {
+                                if (foundGuids.count(sub.guid)) {
+                                    SelectedObject so; so.guid = sub.guid; so.type = sub.type; so.startIndex = sub.startIndex; so.indexCount = sub.indexCount; so.properties = m_document->GetElementProperties(sub.guid);
+                                    m_uiSystem.state.objects.push_back(so);
+                                }
                             }
+                            if (!m_uiSystem.state.objects.empty()) m_uiSystem.state.selectionChanged = true;
                         }
+                    } else if (type == 2) {
+                        BcfImporter::Import(files[0], m_document);
+                    } else if (type == 3) {
+                        GltfImporter::Import(files[0], m_document);
 
-                        if (!m_uiSystem.state.objects.empty()) {
-                            m_uiSystem.state.selectionChanged = true;
-                            std::cout << "[BIMCore] CSV Import successful: Selected " << m_uiSystem.state.objects.size() << " elements.\n";
-                        } else {
-                            std::cout << "[BIMCore] CSV Import: Found GUIDs, but none matched the current model.\n";
-                        }
+                        auto& geom = m_document->GetGeometry();
+                        m_graphics->UploadMesh(geom.vertices, geom.indices);
+                        m_graphics->UploadTextures(geom.textures);
+
+                        // --- FIXED: Snap the UI clipping sliders to the new bounds so it doesn't render invisible! ---
+                        m_uiSystem.state.clipXMin = geom.minBounds[0] - 0.1f;
+                        m_uiSystem.state.clipXMax = geom.maxBounds[0] + 0.1f;
+                        m_uiSystem.state.clipYMin = geom.minBounds[1] - 0.1f;
+                        m_uiSystem.state.clipYMax = geom.maxBounds[1] + 0.1f;
+                        m_uiSystem.state.clipZMin = geom.minBounds[2] - 0.1f;
+                        m_uiSystem.state.clipZMax = geom.maxBounds[2] + 0.1f;
+
+                        m_uiSystem.state.updateGeometry = true;
+
+                        glm::vec3 extents(
+                            geom.maxBounds[0] - geom.minBounds[0],
+                            geom.maxBounds[1] - geom.minBounds[1],
+                            geom.maxBounds[2] - geom.minBounds[2]);
+                        float radius = glm::length(extents) * 0.5f;
+                        m_camera->FocusOn(glm::vec3(geom.center[0], geom.center[1], geom.center[2]), std::max(1.0f, radius));
+                    }
+                }
+            }
+
+            if (m_uiSystem.state.triggerExport > 0) {
+                int type = m_uiSystem.state.triggerExport;
+                m_uiSystem.state.triggerExport = 0;
+
+                if (type == 1 && m_document) {
+                    std::string defaultName = m_currentFileDirectory + "ModelExport.glb";
+                    auto saveDialog = pfd::save_file("Export as glTF", defaultName, { "glTF Binary", "*.glb", "glTF JSON", "*.gltf" });
+                    std::string path = saveDialog.result();
+                    if (!path.empty()) {
+                        GltfExporter::Export(path, m_document);
                     }
                 }
             }
@@ -191,8 +241,17 @@ namespace BimCore {
                 auto& geom = m_document->GetGeometry();
 
                 m_graphics->UploadMesh(geom.vertices, geom.indices);
+                m_graphics->UploadTextures(geom.textures);
+
                 m_globalLoadState.isLoaded.store(true);
-                m_camera->FocusOn(glm::vec3(geom.center[0], geom.center[1], geom.center[2]), 50.0f);
+
+                glm::vec3 extents(
+                    geom.maxBounds[0] - geom.minBounds[0],
+                    geom.maxBounds[1] - geom.minBounds[1],
+                    geom.maxBounds[2] - geom.minBounds[2]);
+                float radius = glm::length(extents) * 0.5f;
+
+                m_camera->FocusOn(glm::vec3(geom.center[0], geom.center[1], geom.center[2]), std::max(1.0f, radius));
 
                 std::string title = m_config.AppName + " v" + m_config.AppVersion + " - " + m_currentFilename;
                 glfwSetWindowTitle(m_window->GetNativeWindow(), title.c_str());
@@ -260,23 +319,28 @@ namespace BimCore {
                 m_currentFileDirectory = (pos != std::string::npos) ? savePath.substr(0, pos + 1) : "";
 
                 std::string title = m_config.AppName + " v" + m_config.AppVersion + " - " + m_currentFilename;
-                glfwSetWindowTitle(m_window->GetNativeWindow(), title.c_str());        }
+                glfwSetWindowTitle(m_window->GetNativeWindow(), title.c_str());
+        }
     }
 
     void EditorApp::Update(float deltaTime, bool& triggerFocus) {
-        if (!m_document) return;
-
         m_input.Update(*m_window, *m_camera, m_document, m_uiSystem.state, m_config, deltaTime, m_currentLightMode, triggerFocus);
         m_camera->Update(deltaTime);
 
+        if (!m_document) return;
+
         if (triggerFocus && !m_uiSystem.state.objects.empty()) {
             auto b = ComputeSelectionBounds(m_uiSystem.state.objects, m_document->GetGeometry());
-            if (b.valid) m_camera->FocusOn((b.min + b.max) * 0.5f, glm::length(b.max - b.min) * 0.5f);
+
+            if (b.valid) {
+                glm::vec3 extents(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
+                float radius = glm::length(extents) * 0.5f;
+                m_camera->FocusOn((b.min + b.max) * 0.5f, std::max(0.5f, radius));
+            }
         }
 
         UpdateGeometryOffsets();
 
-        // --- NEW: Safe 2D Math. Only executes, no drawing! ---
         m_uiSystem.state.renderMeasurements.clear();
         m_uiSystem.state.drawActiveLine = false;
         m_uiSystem.state.renderSnap.draw = false;
@@ -379,6 +443,10 @@ namespace BimCore {
             mesh.maxBounds[2] = std::max(mesh.maxBounds[2], v.position[2]);
         }
 
+        mesh.center[0] = (mesh.minBounds[0] + mesh.maxBounds[0]) * 0.5f;
+        mesh.center[1] = (mesh.minBounds[1] + mesh.maxBounds[1]) * 0.5f;
+        mesh.center[2] = (mesh.minBounds[2] + mesh.maxBounds[2]) * 0.5f;
+
         float newSMinX = mesh.minBounds[0] - 0.1f; float newSMaxX = mesh.maxBounds[0] + 0.1f;
         float newSMinY = mesh.minBounds[1] - 0.1f; float newSMaxY = mesh.maxBounds[1] + 0.1f;
         float newSMinZ = mesh.minBounds[2] - 0.1f; float newSMaxZ = mesh.maxBounds[2] + 0.1f;
@@ -396,19 +464,32 @@ namespace BimCore {
 
     void EditorApp::Render() {
         if (!m_document) {
+            SceneUniforms defaultScene{};
+            defaultScene.viewProjection = m_camera->GetViewProjectionMatrix();
+            defaultScene.invViewProjection = glm::inverse(defaultScene.viewProjection);
+            defaultScene.screenWidth = m_window->GetWidth();
+            defaultScene.screenHeight = m_window->GetHeight();
+            m_graphics->UpdateScene(defaultScene);
             m_graphics->RenderFrame();
             return;
         }
 
-        std::vector<uint32_t> solid, trans;
+        std::map<int, std::vector<uint32_t>> solidBatches, transBatches;
+
         for (const auto& sub : m_document->GetGeometry().subMeshes) {
             if (m_uiSystem.state.hiddenObjects.count(sub.guid)) continue;
             if (!m_uiSystem.state.showOpeningsAndSpaces && (sub.type == "IfcOpeningElement" || sub.type == "IfcSpace")) continue;
 
-            auto& target = sub.isTransparent ? trans : solid;
-            for (uint32_t i=0; i<sub.indexCount; ++i) target.push_back(m_document->GetGeometry().indices[sub.startIndex + i]);
+            auto& targetMap = sub.isTransparent ? transBatches : solidBatches;
+            auto& targetVec = targetMap[sub.textureIndex];
+
+            targetVec.reserve(targetVec.size() + sub.indexCount);
+            for (uint32_t i=0; i<sub.indexCount; ++i) {
+                targetVec.push_back(m_document->GetGeometry().indices[sub.startIndex + i]);
+            }
         }
-        m_graphics->UpdateActiveIndices(solid, trans);
+
+        m_graphics->UpdateActiveBatches(solidBatches, transBatches);
 
         if (m_uiSystem.state.showBoundingBox && !m_uiSystem.state.objects.empty()) {
             auto b = ComputeSelectionBounds(m_uiSystem.state.objects, m_document->GetGeometry());
@@ -433,12 +514,9 @@ namespace BimCore {
                                       glm::vec3(m_document->GetGeometry().maxBounds[0], m_document->GetGeometry().maxBounds[1], m_document->GetGeometry().maxBounds[2])
         );
 
-        // ... (Inside void EditorApp::Render()) ...
-
         SceneUniforms scene{};
         scene.viewProjection = m_camera->GetViewProjectionMatrix();
 
-        // --- NEW: SSAO Math Requirements ---
         scene.invViewProjection = glm::inverse(scene.viewProjection);
         scene.screenWidth = m_window->GetWidth();
         scene.screenHeight = m_window->GetHeight();
@@ -446,7 +524,6 @@ namespace BimCore {
         scene.lightingMode = m_currentLightMode;
         scene.highlightColor = m_uiSystem.state.color;
 
-        // Let the shader know the sun direction so normal lighting continues to work
         scene.sunDirection = glm::vec4(normalize(glm::vec3(0.5f, 0.8f, 0.3f)), 0.0f);
 
         scene.clipActiveMin = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);

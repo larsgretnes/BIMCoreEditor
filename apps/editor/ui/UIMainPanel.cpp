@@ -12,7 +12,8 @@
 
 #define ICON_FA_FOLDER_OPEN   "\xef\x81\xbc"
 #define ICON_FA_SAVE          "\xef\x83\x87"
-#define ICON_FA_UPLOAD        "\xef\x82\x93"
+#define ICON_FA_FILE_IMPORT   "\xef\x95\xaf" // --- NEW: Import Icon ---
+#define ICON_FA_FILE_EXPORT   "\xef\x95\xae" // --- NEW: Export Icon ---
 #define ICON_FA_MOUSE_POINTER "\xef\x89\x85"
 #define ICON_FA_ARROWS_ALT    "\xef\x82\xb2"
 #define ICON_FA_SYNC          "\xef\x80\xa1"
@@ -111,15 +112,34 @@ namespace BimCore {
         ImVec2 bigBtnSize(bigBtnDim, bigBtnDim);
 
         if (ImGui::Button(ICON_FA_FOLDER_OPEN, bigBtnSize)) state.triggerLoad = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open IFC");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open Native IFC");
         ImGui::SameLine();
         if (ImGui::Button(ICON_FA_SAVE, bigBtnSize)) state.triggerSave = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save IFC As");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save Native IFC");
         ImGui::SameLine();
 
-        // --- NEW: CSV Import Button ---
-        if (ImGui::Button(ICON_FA_UPLOAD, bigBtnSize)) state.triggerImportCSV = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import Selection from CSV");
+        // --- NEW: Import Dropdown Menu ---
+        if (ImGui::Button(ICON_FA_FILE_IMPORT, bigBtnSize)) ImGui::OpenPopup("ImportMenu");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import External Data");
+        if (ImGui::BeginPopup("ImportMenu")) {
+            ImGui::TextDisabled("Import Format");
+            ImGui::Separator();
+            if (ImGui::MenuItem("Selection (.csv)")) state.triggerImport = 1;
+            if (ImGui::MenuItem("Issues/Clashes (.bcf)")) state.triggerImport = 2;
+            if (ImGui::MenuItem("3D Geometry (.gltf / .glb)")) state.triggerImport = 3;
+            ImGui::EndPopup();
+        }
+        ImGui::SameLine();
+
+        // --- NEW: Export Dropdown Menu ---
+        if (ImGui::Button(ICON_FA_FILE_EXPORT, bigBtnSize)) ImGui::OpenPopup("ExportMenu");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Export Geometry");
+        if (ImGui::BeginPopup("ExportMenu")) {
+            ImGui::TextDisabled("Export Format");
+            ImGui::Separator();
+            if (ImGui::MenuItem("3D Geometry (.gltf / .glb)")) state.triggerExport = 1;
+            ImGui::EndPopup();
+        }
 
         float spacing = ImGui::GetStyle().ItemSpacing.x;
 

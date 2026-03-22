@@ -4,6 +4,7 @@
 #include "GraphicsContext.h"
 #include "ShaderLibrary.h"
 #include "Core.h"
+#include "scene/BimDocument.h"
 #include <stdexcept>
 #include <cstring>
 #include <vector>
@@ -41,6 +42,8 @@ namespace BimCore {
         ConfigureSurface();
 
         CreateUniformBuffers();
+        CreateDefaultMaterial();
+
         CreateSSAOPipeline();
         CreateRenderTargets();
 
@@ -49,8 +52,10 @@ namespace BimCore {
         CreateAABBPipeline();
         CreateGlassPipeline();
         CreateStencilPipelines();
+        CreateGridPipeline(); // --- NEW: Compile the Grid ---
+
         AllocateGeometryBuffers();
-        BIM_LOG("GPU", "Graphics context fully initialised with Post-Processing.");
+        BIM_LOG("GPU", "Graphics context fully initialised.");
     }
 
     GraphicsContext::~GraphicsContext() {
@@ -66,6 +71,7 @@ namespace BimCore {
         if (m_indexBuffer)                   wgpuBufferRelease(m_indexBuffer);
         if (m_vertexBuffer)                  wgpuBufferRelease(m_vertexBuffer);
 
+        if (m_gridPipeline)                  wgpuRenderPipelineRelease(m_gridPipeline); // --- NEW ---
         if (m_capPipeline)                   wgpuRenderPipelineRelease(m_capPipeline);
         if (m_stencilMaskPipeline)           wgpuRenderPipelineRelease(m_stencilMaskPipeline);
         if (m_glassPipeline)                 wgpuRenderPipelineRelease(m_glassPipeline);
@@ -75,6 +81,18 @@ namespace BimCore {
         if (m_transparentPipeline)           wgpuRenderPipelineRelease(m_transparentPipeline);
         if (m_pipeline)                      wgpuRenderPipelineRelease(m_pipeline);
         if (m_ssaoPipeline)                  wgpuRenderPipelineRelease(m_ssaoPipeline);
+
+        for (auto& gt : m_gpuTextures) {
+            if (gt.bindGroup) wgpuBindGroupRelease(gt.bindGroup);
+            if (gt.view) wgpuTextureViewRelease(gt.view);
+            if (gt.texture) wgpuTextureRelease(gt.texture);
+        }
+
+        if (m_defaultMaterialBindGroup)      wgpuBindGroupRelease(m_defaultMaterialBindGroup);
+        if (m_materialBindGroupLayout)       wgpuBindGroupLayoutRelease(m_materialBindGroupLayout);
+        if (m_defaultTextureView)            wgpuTextureViewRelease(m_defaultTextureView);
+        if (m_defaultTexture)                wgpuTextureRelease(m_defaultTexture);
+        if (m_defaultSampler)                wgpuSamplerRelease(m_defaultSampler);
 
         ReleaseRenderTargets();
 
@@ -201,7 +219,6 @@ namespace BimCore {
         m_depthView = wgpuTextureCreateView(m_depthTexture, nullptr);
 
         WGPUTextureViewDescriptor dReadDesc = {};
-        // --- FIXED: Let the GPU driver automatically infer the Depth-Only sub-format! ---
         dReadDesc.format = WGPUTextureFormat_Undefined;
         dReadDesc.dimension = WGPUTextureViewDimension_2D;
         dReadDesc.baseMipLevel = 0;
@@ -263,6 +280,64 @@ namespace BimCore {
         m_sceneBindGroupLayout = wgpuDeviceCreateBindGroupLayout(m_device, &bglDesc);
     }
 
+    void GraphicsContext::CreateDefaultMaterial() {
+        WGPUSamplerDescriptor sampDesc = {};
+        sampDesc.addressModeU = WGPUAddressMode_Repeat;
+        sampDesc.addressModeV = WGPUAddressMode_Repeat;
+        sampDesc.addressModeW = WGPUAddressMode_Repeat;
+        sampDesc.magFilter = WGPUFilterMode_Linear;
+        sampDesc.minFilter = WGPUFilterMode_Linear;
+        sampDesc.mipmapFilter = WGPUMipmapFilterMode_Linear;
+        sampDesc.maxAnisotropy = 1;
+        m_defaultSampler = wgpuDeviceCreateSampler(m_device, &sampDesc);
+
+        WGPUTextureDescriptor texDesc = {};
+        texDesc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+        texDesc.dimension = WGPUTextureDimension_2D;
+        texDesc.size = {1, 1, 1};
+        texDesc.format = WGPUTextureFormat_RGBA8Unorm;
+        texDesc.mipLevelCount = 1;
+        texDesc.sampleCount = 1;
+        m_defaultTexture = wgpuDeviceCreateTexture(m_device, &texDesc);
+
+        WGPUTexelCopyTextureInfo dest = {};
+        dest.texture = m_defaultTexture;
+        dest.mipLevel = 0;
+        dest.origin = {0, 0, 0};
+
+        WGPUTexelCopyBufferLayout dataLayout = {};
+        dataLayout.offset = 0;
+        dataLayout.bytesPerRow = 4;
+        dataLayout.rowsPerImage = 1;
+
+        uint8_t whitePixel[4] = {255, 255, 255, 255};
+        WGPUExtent3D size = {1, 1, 1};
+        wgpuQueueWriteTexture(m_queue, &dest, whitePixel, 4, &dataLayout, &size);
+
+        WGPUTextureViewDescriptor viewDesc = {};
+        viewDesc.format = WGPUTextureFormat_RGBA8Unorm; viewDesc.dimension = WGPUTextureViewDimension_2D;
+        viewDesc.baseMipLevel = 0; viewDesc.mipLevelCount = 1; viewDesc.baseArrayLayer = 0;
+        viewDesc.arrayLayerCount = 1; viewDesc.aspect = WGPUTextureAspect_All;
+        m_defaultTextureView = wgpuTextureCreateView(m_defaultTexture, &viewDesc);
+
+        WGPUBindGroupLayoutEntry bgle[2] = {};
+        bgle[0].binding = 0; bgle[0].visibility = WGPUShaderStage_Fragment;
+        bgle[0].texture.sampleType = WGPUTextureSampleType_Float; bgle[0].texture.viewDimension = WGPUTextureViewDimension_2D;
+        bgle[1].binding = 1; bgle[1].visibility = WGPUShaderStage_Fragment;
+        bgle[1].sampler.type = WGPUSamplerBindingType_Filtering;
+
+        WGPUBindGroupLayoutDescriptor bgld = {}; bgld.entryCount = 2; bgld.entries = bgle;
+        m_materialBindGroupLayout = wgpuDeviceCreateBindGroupLayout(m_device, &bgld);
+
+        WGPUBindGroupEntry bgEntries[2] = {};
+        bgEntries[0].binding = 0; bgEntries[0].textureView = m_defaultTextureView;
+        bgEntries[1].binding = 1; bgEntries[1].sampler = m_defaultSampler;
+
+        WGPUBindGroupDescriptor bgDesc = {}; bgDesc.layout = m_materialBindGroupLayout;
+        bgDesc.entryCount = 2; bgDesc.entries = bgEntries;
+        m_defaultMaterialBindGroup = wgpuDeviceCreateBindGroup(m_device, &bgDesc);
+    }
+
     WGPUShaderModule GraphicsContext::CreateShaderModule(const std::string& source) const {
         std::string fullCode = Shaders::kUniformsWGSL + source;
         WGPUShaderSourceWGSL src = {};
@@ -274,16 +349,62 @@ namespace BimCore {
     }
 
     static WGPUVertexBufferLayout MakeVertexBufferLayout(std::vector<WGPUVertexAttribute>& attrs) {
-        attrs.resize(3);
+        attrs.resize(4);
         attrs[0] = { WGPUVertexFormat_Float32x3, offsetof(BimCore::Vertex, position), 0 };
         attrs[1] = { WGPUVertexFormat_Float32x3, offsetof(BimCore::Vertex, normal),   1 };
         attrs[2] = { WGPUVertexFormat_Float32x3, offsetof(BimCore::Vertex, color),    2 };
+        attrs[3] = { WGPUVertexFormat_Float32x2, offsetof(BimCore::Vertex, uv),       3 };
         WGPUVertexBufferLayout layout = {};
         layout.arrayStride    = sizeof(BimCore::Vertex);
         layout.stepMode       = WGPUVertexStepMode_Vertex;
-        layout.attributeCount = 3;
+        layout.attributeCount = 4;
         layout.attributes     = attrs.data();
         return layout;
+    }
+
+    // --- NEW: Dynamic Grid setup (uses a full-screen procedural quad) ---
+    void GraphicsContext::CreateGridPipeline() {
+        WGPUShaderModule shader = CreateShaderModule(Shaders::kGridWGSL);
+
+        WGPUPipelineLayoutDescriptor pld = {};
+        pld.bindGroupLayoutCount = 1;
+        pld.bindGroupLayouts = &m_sceneBindGroupLayout;
+        WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(m_device, &pld);
+
+        WGPUBlendState blend = {};
+        blend.color = { WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha };
+        blend.alpha = { WGPUBlendOperation_Add, WGPUBlendFactor_One,      WGPUBlendFactor_OneMinusSrcAlpha };
+
+        WGPUColorTargetState target = {};
+        target.format = m_surfaceFormat;
+        target.blend = &blend;
+        target.writeMask = WGPUColorWriteMask_All;
+
+        WGPUFragmentState frag = {};
+        frag.module = shader;
+        frag.entryPoint = WGPUStringView{"fs_main", 7};
+        frag.targetCount = 1;
+        frag.targets = &target;
+
+        WGPUDepthStencilState ds = {};
+        ds.format = WGPUTextureFormat_Depth24PlusStencil8;
+        ds.depthCompare = WGPUCompareFunction_Less;
+        ds.depthWriteEnabled = WGPUOptionalBool_False;
+
+        WGPURenderPipelineDescriptor pd = {};
+        pd.layout = layout;
+        pd.vertex.module = shader;
+        pd.vertex.entryPoint = WGPUStringView{"vs_main", 7};
+        pd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+        pd.depthStencil = &ds;
+        pd.fragment = &frag;
+        pd.multisample.count = 1;
+        pd.multisample.mask = ~0u;
+
+        m_gridPipeline = wgpuDeviceCreateRenderPipeline(m_device, &pd);
+
+        wgpuShaderModuleRelease(shader);
+        wgpuPipelineLayoutRelease(layout);
     }
 
     void GraphicsContext::CreateSSAOPipeline() {
@@ -335,7 +456,10 @@ namespace BimCore {
     void GraphicsContext::CreateMainPipeline() {
         WGPUShaderModule shader = CreateShaderModule(Shaders::kMainWGSL);
 
-        WGPUPipelineLayoutDescriptor pld = {}; pld.bindGroupLayoutCount = 1; pld.bindGroupLayouts = &m_sceneBindGroupLayout;
+        WGPUBindGroupLayout layouts[] = { m_sceneBindGroupLayout, m_materialBindGroupLayout };
+        WGPUPipelineLayoutDescriptor pld = {};
+        pld.bindGroupLayoutCount = 2;
+        pld.bindGroupLayouts = layouts;
         WGPUPipelineLayout pipelineLayout = wgpuDeviceCreatePipelineLayout(m_device, &pld);
 
         std::vector<WGPUVertexAttribute> attrs;
@@ -634,6 +758,58 @@ namespace BimCore {
         m_glassIndexBuffer = wgpuDeviceCreateBuffer(m_device, &gibd);
     }
 
+    void GraphicsContext::UploadTextures(const std::vector<TextureData>& textures) {
+        for (auto& gt : m_gpuTextures) {
+            if (gt.bindGroup) wgpuBindGroupRelease(gt.bindGroup);
+            if (gt.view) wgpuTextureViewRelease(gt.view);
+            if (gt.texture) wgpuTextureRelease(gt.texture);
+        }
+        m_gpuTextures.clear();
+
+        for (const auto& texData : textures) {
+            WGPUTextureDescriptor desc = {};
+            desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+            desc.dimension = WGPUTextureDimension_2D;
+            desc.size = { texData.width, texData.height, 1 };
+            desc.format = WGPUTextureFormat_RGBA8Unorm;
+            desc.mipLevelCount = 1;
+            desc.sampleCount = 1;
+
+            GPUTexture gt;
+            gt.texture = wgpuDeviceCreateTexture(m_device, &desc);
+
+            WGPUExtent3D extent = { texData.width, texData.height, 1 };
+            WGPUTexelCopyTextureInfo dest = {};
+            dest.texture = gt.texture;
+
+            WGPUTexelCopyBufferLayout layout = {};
+            layout.bytesPerRow = texData.width * 4;
+            layout.rowsPerImage = texData.height;
+
+            wgpuQueueWriteTexture(m_queue, &dest, texData.pixels.data(), texData.pixels.size(), &layout, &extent);
+
+            WGPUTextureViewDescriptor viewDesc = {};
+            viewDesc.format = WGPUTextureFormat_RGBA8Unorm;
+            viewDesc.dimension = WGPUTextureViewDimension_2D;
+            viewDesc.baseMipLevel = 0; viewDesc.mipLevelCount = 1;
+            viewDesc.baseArrayLayer = 0; viewDesc.arrayLayerCount = 1;
+            viewDesc.aspect = WGPUTextureAspect_All;
+            gt.view = wgpuTextureCreateView(gt.texture, &viewDesc);
+
+            WGPUBindGroupEntry entries[2] = {};
+            entries[0].binding = 0; entries[0].textureView = gt.view;
+            entries[1].binding = 1; entries[1].sampler = m_defaultSampler;
+
+            WGPUBindGroupDescriptor bgDesc = {};
+            bgDesc.layout = m_materialBindGroupLayout;
+            bgDesc.entryCount = 2;
+            bgDesc.entries = entries;
+            gt.bindGroup = wgpuDeviceCreateBindGroup(m_device, &bgDesc);
+
+            m_gpuTextures.push_back(gt);
+        }
+    }
+
     void GraphicsContext::UpdateScene(const SceneUniforms& uniforms) {
         if (m_uniformBuffer) {
             wgpuQueueWriteBuffer(m_queue, m_uniformBuffer, 0, &uniforms, sizeof(SceneUniforms));
@@ -707,16 +883,38 @@ namespace BimCore {
                                  vertices.data(), vertices.size() * sizeof(Vertex));
     }
 
-    void GraphicsContext::UpdateActiveIndices(const std::vector<uint32_t>& solidIdx, const std::vector<uint32_t>& transparentIdx) {
-        m_activeIndexCount = static_cast<uint32_t>(solidIdx.size());
-        if (m_activeIndexBuffer && m_activeIndexCount > 0)
-            wgpuQueueWriteBuffer(m_queue, m_activeIndexBuffer, 0,
-                                 solidIdx.data(), solidIdx.size() * sizeof(uint32_t));
+    void GraphicsContext::UpdateActiveBatches(const std::map<int, std::vector<uint32_t>>& solidMap, const std::map<int, std::vector<uint32_t>>& transMap) {
+        std::vector<uint32_t> flatSolid;
+        m_solidBatches.clear();
+        for (const auto& [texIdx, inds] : solidMap) {
+            if (inds.empty()) continue;
+            RenderBatch b;
+            b.startIndex = static_cast<uint32_t>(flatSolid.size());
+            b.indexCount = static_cast<uint32_t>(inds.size());
+            b.textureIndex = texIdx;
+            m_solidBatches.push_back(b);
+            flatSolid.insert(flatSolid.end(), inds.begin(), inds.end());
+        }
 
-            m_activeTransparentIndexCount = static_cast<uint32_t>(transparentIdx.size());
+        m_activeIndexCount = static_cast<uint32_t>(flatSolid.size());
+        if (m_activeIndexBuffer && m_activeIndexCount > 0)
+            wgpuQueueWriteBuffer(m_queue, m_activeIndexBuffer, 0, flatSolid.data(), flatSolid.size() * sizeof(uint32_t));
+
+        std::vector<uint32_t> flatTrans;
+        m_transparentBatches.clear();
+        for (const auto& [texIdx, inds] : transMap) {
+            if (inds.empty()) continue;
+            RenderBatch b;
+            b.startIndex = static_cast<uint32_t>(flatTrans.size());
+            b.indexCount = static_cast<uint32_t>(inds.size());
+            b.textureIndex = texIdx;
+            m_transparentBatches.push_back(b);
+            flatTrans.insert(flatTrans.end(), inds.begin(), inds.end());
+        }
+
+        m_activeTransparentIndexCount = static_cast<uint32_t>(flatTrans.size());
         if (m_activeTransparentIndexBuffer && m_activeTransparentIndexCount > 0)
-            wgpuQueueWriteBuffer(m_queue, m_activeTransparentIndexBuffer, 0,
-                                 transparentIdx.data(), transparentIdx.size() * sizeof(uint32_t));
+            wgpuQueueWriteBuffer(m_queue, m_activeTransparentIndexBuffer, 0, flatTrans.data(), flatTrans.size() * sizeof(uint32_t));
     }
 
     void GraphicsContext::Resize(int newWidth, int newHeight) {
@@ -864,7 +1062,15 @@ namespace BimCore {
             wgpuRenderPassEncoderSetPipeline(rp, m_pipeline);
             wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_vertexBuffer, 0, WGPU_WHOLE_SIZE);
             wgpuRenderPassEncoderSetIndexBuffer(rp, m_activeIndexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
-            wgpuRenderPassEncoderDrawIndexed(rp, m_activeIndexCount, 1, 0, 0, 0);
+
+            for (const auto& batch : m_solidBatches) {
+                WGPUBindGroup targetBG = m_defaultMaterialBindGroup;
+                if (batch.textureIndex >= 0 && batch.textureIndex < static_cast<int>(m_gpuTextures.size())) {
+                    targetBG = m_gpuTextures[batch.textureIndex].bindGroup;
+                }
+                wgpuRenderPassEncoderSetBindGroup(rp, 1, targetBG, 0, nullptr);
+                wgpuRenderPassEncoderDrawIndexed(rp, batch.indexCount, 1, batch.startIndex, 0, 0);
+            }
         }
 
         if (m_vertexBuffer && m_activeIndexBuffer && m_activeIndexCount > 0) {
@@ -883,11 +1089,25 @@ namespace BimCore {
             wgpuRenderPassEncoderDrawIndexed(rp, m_capIndexCount, 1, 0, 0, 0);
         }
 
+        // --- NEW: Draw the Infinite Grid BEFORE transparent models ---
+        if (m_gridPipeline) {
+            wgpuRenderPassEncoderSetPipeline(rp, m_gridPipeline);
+            wgpuRenderPassEncoderDraw(rp, 6, 1, 0, 0);
+        }
+
         if (m_vertexBuffer && m_activeTransparentIndexBuffer && m_activeTransparentIndexCount > 0) {
             wgpuRenderPassEncoderSetPipeline(rp, m_transparentPipeline);
             wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_vertexBuffer, 0, WGPU_WHOLE_SIZE);
             wgpuRenderPassEncoderSetIndexBuffer(rp, m_activeTransparentIndexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
-            wgpuRenderPassEncoderDrawIndexed(rp, m_activeTransparentIndexCount, 1, 0, 0, 0);
+
+            for (const auto& batch : m_transparentBatches) {
+                WGPUBindGroup targetBG = m_defaultMaterialBindGroup;
+                if (batch.textureIndex >= 0 && batch.textureIndex < static_cast<int>(m_gpuTextures.size())) {
+                    targetBG = m_gpuTextures[batch.textureIndex].bindGroup;
+                }
+                wgpuRenderPassEncoderSetBindGroup(rp, 1, targetBG, 0, nullptr);
+                wgpuRenderPassEncoderDrawIndexed(rp, batch.indexCount, 1, batch.startIndex, 0, 0);
+            }
         }
 
         if (m_glassIndexCount > 0 && m_glassVertexBuffer && m_glassIndexBuffer) {
@@ -978,10 +1198,7 @@ namespace BimCore {
         wgpuInfo.Device              = m_device;
         wgpuInfo.NumFramesInFlight   = 3;
         wgpuInfo.RenderTargetFormat  = m_surfaceFormat;
-
-        // --- FIXED: ImGui is drawn in the 2D post-pass, which has no depth buffer! ---
         wgpuInfo.DepthStencilFormat  = WGPUTextureFormat_Undefined;
-
         ImGui_ImplWGPU_Init(&wgpuInfo);
     }
 

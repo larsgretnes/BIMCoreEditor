@@ -6,6 +6,7 @@
 #include <webgpu/webgpu.h>
 #include <glm/glm.hpp>
 #include <vector>
+#include <map>
 #include <cstdint>
 #include <string>
 
@@ -18,6 +19,7 @@ namespace BimCore {
         float position[3];
         float normal[3];
         float color[3];
+        float uv[2];
     };
 
     struct SceneUniforms {
@@ -40,6 +42,8 @@ namespace BimCore {
         uint32_t indexCount;
     };
 
+    struct TextureData;
+
     class GraphicsContext {
     public:
         GraphicsContext(GLFWwindow* window, int width, int height);
@@ -51,9 +55,13 @@ namespace BimCore {
         void UploadMesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices);
         void UpdateGeometry(const std::vector<Vertex>& vertices);
 
+        void UploadTextures(const std::vector<TextureData>& textures);
+
         void UpdateScene(const SceneUniforms& uniforms);
         void UpdateInstanceData(const std::vector<glm::mat4>& transforms);
-        void UpdateActiveIndices(const std::vector<uint32_t>& solidIdx, const std::vector<uint32_t>& transparentIdx);
+
+        void UpdateActiveBatches(const std::map<int, std::vector<uint32_t>>& solidBatches,
+                                 const std::map<int, std::vector<uint32_t>>& transparentBatches);
 
         void SetHighlight(bool active, const std::vector<HighlightRange>& ranges, int style);
         void SetBoundingBox(bool active, const glm::vec3& minB, const glm::vec3& maxB);
@@ -79,6 +87,8 @@ namespace BimCore {
         void CreateRenderTargets();
         void ReleaseRenderTargets();
 
+        void CreateDefaultMaterial();
+
         WGPUShaderModule CreateShaderModule(const std::string& source) const;
         void CreateMainPipeline();
         void CreateHighlightPipeline();
@@ -86,6 +96,7 @@ namespace BimCore {
         void CreateGlassPipeline();
         void CreateStencilPipelines();
         void CreateSSAOPipeline();
+        void CreateGridPipeline(); // --- NEW: Setup function for the Grid ---
         void AllocateGeometryBuffers();
 
     private:
@@ -116,6 +127,19 @@ namespace BimCore {
         WGPUBindGroup       m_ssaoBindGroup       = nullptr;
         WGPURenderPipeline  m_ssaoPipeline        = nullptr;
 
+        struct GPUTexture {
+            WGPUTexture texture = nullptr;
+            WGPUTextureView view = nullptr;
+            WGPUBindGroup bindGroup = nullptr;
+        };
+        std::vector<GPUTexture> m_gpuTextures;
+
+        WGPUSampler         m_defaultSampler           = nullptr;
+        WGPUTexture         m_defaultTexture           = nullptr;
+        WGPUTextureView     m_defaultTextureView       = nullptr;
+        WGPUBindGroupLayout m_materialBindGroupLayout  = nullptr;
+        WGPUBindGroup       m_defaultMaterialBindGroup = nullptr;
+
         WGPURenderPipeline m_pipeline            = nullptr;
         WGPURenderPipeline m_transparentPipeline = nullptr;
         WGPURenderPipeline m_highlightSolidPipeline   = nullptr;
@@ -124,10 +148,19 @@ namespace BimCore {
         WGPURenderPipeline m_glassPipeline            = nullptr;
         WGPURenderPipeline m_stencilMaskPipeline      = nullptr;
         WGPURenderPipeline m_capPipeline              = nullptr;
+        WGPURenderPipeline m_gridPipeline             = nullptr; // --- NEW: The compiled Grid shader ---
 
         WGPUBuffer m_vertexBuffer = nullptr;
         WGPUBuffer m_indexBuffer  = nullptr;
         uint32_t   m_indexCount   = 0;
+
+        struct RenderBatch {
+            uint32_t startIndex;
+            uint32_t indexCount;
+            int textureIndex;
+        };
+        std::vector<RenderBatch> m_solidBatches;
+        std::vector<RenderBatch> m_transparentBatches;
 
         WGPUBuffer m_activeIndexBuffer          = nullptr;
         uint32_t   m_activeIndexCount           = 0;

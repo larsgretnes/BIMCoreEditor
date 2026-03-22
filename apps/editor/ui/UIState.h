@@ -71,7 +71,10 @@ namespace BimCore {
 
         bool                            triggerLoad        = false;
         bool                            triggerSave        = false;
-        bool                            triggerImportCSV   = false;
+
+        int                             triggerImport      = 0; // 0=None, 1=CSV, 2=BCF, 3=glTF
+        int                             triggerExport      = 0; // 0=None, 1=glTF
+
         bool                            triggerResetCamera = false;
         LoadState* loadState          = nullptr;
 

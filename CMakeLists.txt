@@ -43,7 +43,7 @@ if(NOT TARGET glfw)
         find_library(GLFW_LIB NAMES glfw3dll glfw3 glfw)
         if(GLFW_LIB AND GLFW_INCLUDE_DIR)
             add_library(glfw UNKNOWN IMPORTED GLOBAL)
-            set_target_properties(glfw PROPERTIES 
+            set_target_properties(glfw PROPERTIES
                 IMPORTED_LOCATION "${GLFW_LIB}"
                 INTERFACE_INCLUDE_DIRECTORIES "${GLFW_INCLUDE_DIR}"
             )
@@ -64,7 +64,7 @@ if(NOT IfcOpenShell_FOUND)
     find_path(OCC_INCLUDE_DIR NAMES Standard.hxx PATH_SUFFIXES opencascade)
     find_path(EIGEN_INCLUDE_DIR NAMES Eigen/Dense PATH_SUFFIXES eigen3)
     find_library(IFCPARSE_LIB NAMES IfcParse)
-    
+
     if(IFC_INCLUDE_DIR AND IFCPARSE_LIB)
         set(MISSING_HEADER "${IFC_INCLUDE_DIR}/ifcgeom/kernels/ifc_geomlibrary_api.h")
         if(NOT EXISTS "${MISSING_HEADER}")
@@ -81,7 +81,7 @@ if(NOT IfcOpenShell_FOUND)
 
         get_filename_component(IFC_LIB_DIR "${IFCPARSE_LIB}" DIRECTORY)
         file(GLOB ALL_SDK_LIBS "${IFC_LIB_DIR}/*.lib")
-        
+
         add_library(IfcOpenShell_All INTERFACE)
         target_include_directories(IfcOpenShell_All INTERFACE "${IFCGEOM_INCLUDES}")
         target_link_directories(IfcOpenShell_All INTERFACE "${IFC_LIB_DIR}")
@@ -101,7 +101,12 @@ include(FetchContent)
 FetchContent_Declare(webgpu GIT_REPOSITORY https://github.com/eliemichel/WebGPU-distribution.git GIT_TAG main)
 FetchContent_Declare(glfw3webgpu GIT_REPOSITORY https://github.com/eliemichel/glfw3webgpu.git GIT_TAG main)
 FetchContent_Declare(imgui_fetch GIT_REPOSITORY https://github.com/ocornut/imgui.git GIT_TAG master)
-FetchContent_MakeAvailable(webgpu glfw3webgpu imgui_fetch)
+
+# --- NEW: Added Nlohmann JSON and TinyGLTF ---
+FetchContent_Declare(nlohmann_json GIT_REPOSITORY https://github.com/nlohmann/json.git GIT_TAG v3.11.3)
+FetchContent_Declare(tinygltf GIT_REPOSITORY https://github.com/syoyo/tinygltf.git GIT_TAG v2.8.3)
+
+FetchContent_MakeAvailable(webgpu glfw3webgpu imgui_fetch nlohmann_json tinygltf)
 
 # ==============================================================================
 # 4. IMGUI MANUAL TARGET SETUP
@@ -131,10 +136,22 @@ set(SDK_SOURCES
     sdk/src/scene/IfcLoader.cpp
     sdk/src/scene/IfcExporter.cpp
     sdk/src/scene/CsvImporter.cpp
+    sdk/src/scene/FormatModules.cpp
 )
 add_library(BimCore_SDK STATIC ${SDK_SOURCES})
+
+# --- FIXED: Strict warnings for OUR code ---
 target_include_directories(BimCore_SDK PUBLIC sdk/src "${GLM_INCLUDE_DIR}")
-target_link_libraries(BimCore_SDK PUBLIC imgui glfw webgpu glfw3webgpu IfcOpenShell::IfcParse IfcOpenShell::IfcGeom)
+
+# --- FIXED: Mute warnings for 3rd-party code using the SYSTEM flag ---
+target_include_directories(BimCore_SDK SYSTEM PUBLIC "${tinygltf_SOURCE_DIR}")
+
+# Linked nlohmann_json and tinygltf to the SDK
+target_link_libraries(BimCore_SDK PUBLIC
+    imgui glfw webgpu glfw3webgpu
+    IfcOpenShell::IfcParse IfcOpenShell::IfcGeom
+    nlohmann_json::nlohmann_json tinygltf
+)
 
 # ==============================================================================
 # 6. THE EDITOR APPLICATION

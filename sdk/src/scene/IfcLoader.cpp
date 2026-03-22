@@ -127,9 +127,12 @@ namespace BimCore {
                             auto [it, inserted] = localVertMap.emplace(origIdx, 0u);
                             if (inserted) {
                                 Vertex vertex = {};
+
+                                // --- FIXED: Strict 1:1 Mapping for Z-Up ---
                                 vertex.position[0] = static_cast<float>(verts[vOff]);
-                                vertex.position[1] = static_cast<float>(verts[vOff + 2]);
-                                vertex.position[2] = -static_cast<float>(verts[vOff + 1]);
+                                vertex.position[1] = static_cast<float>(verts[vOff + 1]);
+                                vertex.position[2] = static_cast<float>(verts[vOff + 2]);
+
                                 for (int j = 0; j < 3; ++j) {
                                     if (vertex.position[j] < subMin[j]) subMin[j] = vertex.position[j];
                                     if (vertex.position[j] > subMax[j]) subMax[j] = vertex.position[j];
@@ -137,10 +140,11 @@ namespace BimCore {
                                     if (vertex.position[j] > maxB[j])   maxB[j]   = vertex.position[j];
                                 }
                                 if (vOff + 2 < static_cast<int>(normals.size())) {
+                                    // --- FIXED: Strict 1:1 Mapping for Normals ---
                                     vertex.normal[0] = static_cast<float>(normals[vOff]);
-                                    vertex.normal[1] = static_cast<float>(normals[vOff + 2]);
-                                    vertex.normal[2] = -static_cast<float>(normals[vOff + 1]);
-                                } else { vertex.normal[1] = 1.0f; }
+                                    vertex.normal[1] = static_cast<float>(normals[vOff + 1]);
+                                    vertex.normal[2] = static_cast<float>(normals[vOff + 2]);
+                                } else { vertex.normal[2] = 1.0f; }
                                 vertex.color[0] = r; vertex.color[1] = g; vertex.color[2] = b;
                                 it->second = static_cast<uint32_t>(mesh.vertices.size());
                                 mesh.vertices.push_back(vertex);
@@ -178,8 +182,7 @@ namespace BimCore {
 
             auto doc = std::make_shared<BimDocument>(ifcDb, std::move(mesh), filepath);
 
-            // --- 5. NEW: DIRECT TEXT-BASED HIERARCHY PARSER ---
-            // Bypasses all unstable C++ Reflection API versions completely
+            // --- 5. DIRECT TEXT-BASED HIERARCHY PARSER ---
             if (state) state->SetStatus("Resolving spatial hierarchy...", 0.95f);
 
             std::unordered_map<int, std::string> stepIdToGuid;
