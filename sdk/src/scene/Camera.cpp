@@ -21,18 +21,21 @@ namespace BimCore {
     }
 
     void Camera::ProcessKeyboard(const glm::vec3& direction, float deltaTime) {
+        m_isFocusing = false; // --- Interrupt any active transitions ---
+
         float velocity = m_movementSpeed * deltaTime;
 
         m_position += m_front * direction.z * velocity;
         m_position += m_right * direction.x * velocity;
         m_position += m_up * direction.y * velocity;
 
-        // --- NEW: Sync the CAD pivot so Flight Mode doesn't break Orbiting! ---
         m_pivot = m_position + (m_front * m_orbitDistance);
         m_dirty = true;
     }
 
     void Camera::ProcessMouseMovement(float xoffset, float yoffset) {
+        m_isFocusing = false; // --- Interrupt any active transitions ---
+
         xoffset *= m_mouseSensitivity;
         yoffset *= m_mouseSensitivity;
 
@@ -45,20 +48,36 @@ namespace BimCore {
 
         UpdateCameraVectors();
 
-        // --- NEW: Sync the CAD pivot here too! ---
         m_pivot = m_position + (m_front * m_orbitDistance);
         m_dirty = true;
     }
 
     void Camera::SetPivot(const glm::vec3& newPivot) {
-        m_pivot = newPivot;
-        // Recalculate distance so the camera stays exactly where it is!
-        m_orbitDistance = glm::length(m_position - m_pivot);
-        m_dirty = true;
+        // --- FIXED: Trigger a smooth ease if the jump is noticeable! ---
+        float jumpDist = glm::length(m_pivot - newPivot);
+
+        if (jumpDist > 0.5f) { // Arbitrary threshold
+            m_startPivot = m_pivot;
+            m_targetPivot = newPivot;
+            m_startDistance = m_orbitDistance;
+
+            // Keep the target distance relative to how far away the camera is from the new object
+            m_targetDistance = glm::length(m_position - newPivot);
+            if (m_targetDistance < 1.0f) m_targetDistance = 1.0f;
+
+            m_isFocusing = true;
+            m_isResettingAngles = false;
+            m_focusProgress = 0.0f;
+        } else {
+            m_pivot = newPivot;
+            m_orbitDistance = glm::length(m_position - m_pivot);
+            m_dirty = true;
+        }
     }
 
     void Camera::ProcessPan(float deltaX, float deltaY) {
-        // --- NEW: True CAD Panning Math ---
+        m_isFocusing = false; // --- Interrupt any active transitions ---
+
         float panSpeed = (m_orbitDistance * std::tan(m_fov / 2.0f) * 2.0f) / 1080.0f;
         panSpeed = std::max(0.005f, panSpeed); // Ensure it never completely stops
 
@@ -69,6 +88,8 @@ namespace BimCore {
     }
 
     void Camera::ProcessOrbit(float deltaX, float deltaY) {
+        m_isFocusing = false; // --- Interrupt any active transitions ---
+
         m_yaw += deltaX * m_mouseSensitivity;
         m_pitch += deltaY * m_mouseSensitivity;
 
@@ -83,7 +104,8 @@ namespace BimCore {
     }
 
     void Camera::ProcessZoom(float zoomDelta) {
-        // --- FIX: Restored full zoom speed so it flies! ---
+        m_isFocusing = false; // --- Interrupt any active transitions ---
+
         // A minimal buffer of 0.5f ensures it never permanently halts
         float dynamicZoomSpeed = std::max(0.5f, m_orbitDistance * 0.1f) * m_zoomSpeed;
         m_orbitDistance -= (zoomDelta * dynamicZoomSpeed);
@@ -111,7 +133,7 @@ namespace BimCore {
 
         // Trigger the animation lock
         m_isFocusing = true;
-        m_isResettingAngles = false; 
+        m_isResettingAngles = false;
         m_focusProgress = 0.0f;
     }
 

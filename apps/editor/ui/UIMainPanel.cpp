@@ -12,6 +12,7 @@
 
 #define ICON_FA_FOLDER_OPEN   "\xef\x81\xbc"
 #define ICON_FA_SAVE          "\xef\x83\x87"
+#define ICON_FA_UPLOAD        "\xef\x82\x93"
 #define ICON_FA_MOUSE_POINTER "\xef\x89\x85"
 #define ICON_FA_ARROWS_ALT    "\xef\x82\xb2"
 #define ICON_FA_SYNC          "\xef\x80\xa1"
@@ -110,10 +111,15 @@ namespace BimCore {
         ImVec2 bigBtnSize(bigBtnDim, bigBtnDim);
 
         if (ImGui::Button(ICON_FA_FOLDER_OPEN, bigBtnSize)) state.triggerLoad = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open IFC");
         ImGui::SameLine();
         if (ImGui::Button(ICON_FA_SAVE, bigBtnSize)) state.triggerSave = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save As");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save IFC As");
+        ImGui::SameLine();
+
+        // --- NEW: CSV Import Button ---
+        if (ImGui::Button(ICON_FA_UPLOAD, bigBtnSize)) state.triggerImportCSV = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import Selection from CSV");
 
         float spacing = ImGui::GetStyle().ItemSpacing.x;
 

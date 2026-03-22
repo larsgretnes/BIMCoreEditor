@@ -10,6 +10,7 @@
 #include <fstream>
 
 #include "scene/IfcExporter.h"
+#include "scene/CsvImporter.h" // --- NEW ---
 #include "platform/portable-file-dialogs.h"
 
 namespace BimCore {
@@ -39,7 +40,10 @@ namespace BimCore {
     bool EditorApp::Initialize() {
         m_config.Load();
 
-        m_window = std::make_unique<Window>(m_config.WindowWidth, m_config.WindowHeight, "BIMCore Editor v0.1");
+        // --- FIXED: Dynamic Window Title ---
+        std::string title = m_config.AppName + " v" + m_config.AppVersion;
+        m_window = std::make_unique<Window>(m_config.WindowWidth, m_config.WindowHeight, title.c_str());
+
         m_graphics = std::make_unique<GraphicsContext>(m_window->GetNativeWindow(), m_config.WindowWidth, m_config.WindowHeight);
         m_graphics->InitImGui(m_window->GetNativeWindow());
 
@@ -115,6 +119,39 @@ namespace BimCore {
                 }
             }
 
+            if (m_uiSystem.state.triggerImportCSV) {
+                m_uiSystem.state.triggerImportCSV = false;
+                auto fileDialog = pfd::open_file("Select CSV to Import", m_currentFileDirectory, { "CSV Files", "*.csv" });
+                auto files = fileDialog.result();
+
+                if (!files.empty() && m_document) {
+                    // --- FIXED: Calling the modular utility class ---
+                    auto foundGuids = CsvImporter::ExtractGuids(files[0]);
+
+                    if (!foundGuids.empty()) {
+                        m_uiSystem.state.objects.clear();
+                        for (const auto& sub : m_document->GetGeometry().subMeshes) {
+                            if (foundGuids.count(sub.guid)) {
+                                SelectedObject so;
+                                so.guid = sub.guid;
+                                so.type = sub.type;
+                                so.startIndex = sub.startIndex;
+                                so.indexCount = sub.indexCount;
+                                so.properties = m_document->GetElementProperties(sub.guid);
+                                m_uiSystem.state.objects.push_back(so);
+                            }
+                        }
+
+                        if (!m_uiSystem.state.objects.empty()) {
+                            m_uiSystem.state.selectionChanged = true;
+                            std::cout << "[BIMCore] CSV Import successful: Selected " << m_uiSystem.state.objects.size() << " elements.\n";
+                        } else {
+                            std::cout << "[BIMCore] CSV Import: Found GUIDs, but none matched the current model.\n";
+                        }
+                    }
+                }
+            }
+
             HandleSaveTask();
             Update(deltaTime, triggerFocus);
             Render();
@@ -157,7 +194,7 @@ namespace BimCore {
                 m_globalLoadState.isLoaded.store(true);
                 m_camera->FocusOn(glm::vec3(geom.center[0], geom.center[1], geom.center[2]), 50.0f);
 
-                std::string title = "BIMCore Editor v0.1 - " + m_currentFilename;
+                std::string title = m_config.AppName + " v" + m_config.AppVersion + " - " + m_currentFilename;
                 glfwSetWindowTitle(m_window->GetNativeWindow(), title.c_str());
 
                 m_uiSystem.state.explodeFactor = 0.0f;
@@ -222,9 +259,8 @@ namespace BimCore {
                 m_currentFilename = (pos != std::string::npos) ? savePath.substr(pos + 1) : savePath;
                 m_currentFileDirectory = (pos != std::string::npos) ? savePath.substr(0, pos + 1) : "";
 
-                std::string title = "BIMCore Editor v0.1 - " + m_currentFilename;
-                glfwSetWindowTitle(m_window->GetNativeWindow(), title.c_str());
-        }
+                std::string title = m_config.AppName + " v" + m_config.AppVersion + " - " + m_currentFilename;
+                glfwSetWindowTitle(m_window->GetNativeWindow(), title.c_str());        }
     }
 
     void EditorApp::Update(float deltaTime, bool& triggerFocus) {
@@ -232,16 +268,6 @@ namespace BimCore {
 
         m_input.Update(*m_window, *m_camera, m_document, m_uiSystem.state, m_config, deltaTime, m_currentLightMode, triggerFocus);
         m_camera->Update(deltaTime);
-
-        if (m_uiSystem.state.selectionChanged) {
-            m_uiSystem.state.selectionChanged = false;
-            if (!m_uiSystem.state.objects.empty()) {
-                auto b = ComputeSelectionBounds(m_uiSystem.state.objects, m_document->GetGeometry());
-                if (b.valid) {
-                    m_camera->SetPivot((b.min + b.max) * 0.5f);
-                }
-            }
-        }
 
         if (triggerFocus && !m_uiSystem.state.objects.empty()) {
             auto b = ComputeSelectionBounds(m_uiSystem.state.objects, m_document->GetGeometry());

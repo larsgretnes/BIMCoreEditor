@@ -6,6 +6,10 @@
 
 namespace BimCore {
     struct EngineConfig {
+        // --- NEW: Centralized Application Info ---
+        std::string AppName = "BIMCore Editor";
+        std::string AppVersion = "0.2";
+
         int WindowWidth = 1280;
         int WindowHeight = 720;
 
@@ -47,7 +51,7 @@ namespace BimCore {
         int KeyToolSelect = 49;
         int KeyToolPan = 50;
         int KeyToolOrbit = 51;
-        int KeyToolMeasure = 77; // --- FIXED: Mapped to 'M' (ASCII 77) ---
+        int KeyToolMeasure = 77;
         int CadPanButton = 2;
         int CadOrbitModifier = 340;
 

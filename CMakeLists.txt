@@ -130,6 +130,7 @@ set(SDK_SOURCES
     sdk/src/scene/BimDocument.cpp
     sdk/src/scene/IfcLoader.cpp
     sdk/src/scene/IfcExporter.cpp
+    sdk/src/scene/CsvImporter.cpp
 )
 add_library(BimCore_SDK STATIC ${SDK_SOURCES})
 target_include_directories(BimCore_SDK PUBLIC sdk/src "${GLM_INCLUDE_DIR}")
