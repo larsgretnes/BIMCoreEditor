@@ -19,7 +19,28 @@
 
 namespace BimCore {
 
+    // --- FIXED: Reverted to the core 3 tools. Measure is now an independent mode! ---
     enum class InteractionTool { Select, Pan, Orbit };
+    enum class SnapType { None, Vertex, Edge, Face };
+
+    struct Measurement {
+        glm::vec3 p1;
+        glm::vec3 p2;
+    };
+
+    struct Measurement2D {
+        float p1[2];
+        float p2[2];
+        char  text[64];
+    };
+
+    struct SnapOverlay2D {
+        bool     draw = false;
+        SnapType type = SnapType::None;
+        float    p[2];
+        float    e0[2];
+        float    e1[2];
+    };
 
     struct SelectedObject {
         std::string                         guid;
@@ -56,7 +77,6 @@ namespace BimCore {
         float                           explodeFactor      = 0.0f;
         bool                            updateGeometry     = false;
 
-        // --- NEW: 6 Clipping States ---
         bool                            showPlaneXMin = false, showPlaneXMax = false;
         bool                            showPlaneYMin = false, showPlaneYMax = false;
         bool                            showPlaneZMin = false, showPlaneZMax = false;
@@ -89,10 +109,31 @@ namespace BimCore {
         std::map<std::string, std::string>           cachedNames;
         bool                                         groupsBuilt = false;
         bool                                         selectionChanged = false;
+
         bool                                         showBoundingBox = false;
+        bool                                         showOpeningsAndSpaces = false;
+        bool                                         selectAssemblies = true;
 
         int                                          lastClickedVisualIndex = -1;
         std::string                                  lastClickedGroup       = "";
+
+        // --- NEW: Independent Measure Mode Toggle ---
+        bool                       measureToolActive = false;
+
+        std::vector<Measurement>   completedMeasurements;
+        std::vector<Measurement2D> renderMeasurements;
+        SnapOverlay2D              renderSnap;
+        Measurement2D              renderActiveLine;
+        bool                       drawActiveLine = false;
+
+        bool      isMeasuringActive = false;
+        bool      isHoveringGeometry = false;
+        glm::vec3 measureStartPoint {0,0,0};
+
+        SnapType  currentSnapType = SnapType::None;
+        glm::vec3 currentSnapPoint {0,0,0};
+        glm::vec3 currentSnapEdgeV0 {0,0,0};
+        glm::vec3 currentSnapEdgeV1 {0,0,0};
     };
 
 } // namespace BimCore

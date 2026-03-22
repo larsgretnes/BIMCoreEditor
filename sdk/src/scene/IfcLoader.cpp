@@ -22,16 +22,14 @@ namespace BimCore {
             BIM_ERR("IfcLoader", msg);
             if (state) { state->hasError.store(true); state->SetStatus(msg, 1.0f); }
         };
-        
+
         if (state) { state->hasError.store(false); state->SetStatus("Verifying file...", 0.05f); }
 
-        // --- 1. HEURISTIC MEMORY PROFILING ---
         std::ifstream check(filepath, std::ios::binary | std::ios::ate);
         if (!check.good()) {
             setErr("File not found or inaccessible: " + filepath);
             return nullptr;
         }
-        
         size_t fileSize = check.tellg();
         check.close();
 
@@ -43,36 +41,33 @@ namespace BimCore {
             if (state) state->SetStatus("Initialising geometry kernel...", 0.25f);
             ifcopenshell::geometry::Settings settings;
             settings.get<ifcopenshell::geometry::settings::UseWorldCoords>().value = true;
-            settings.get<ifcopenshell::geometry::settings::MesherLinearDeflection>().value = 0.005; 
+            settings.get<ifcopenshell::geometry::settings::MesherLinearDeflection>().value = 0.005;
 
             const unsigned int hwThreads = std::thread::hardware_concurrency();
             const int useThreads = (hwThreads > 0) ? static_cast<int>(hwThreads) : 2;
             BIM_LOG("IfcLoader", "Geometry kernel threads: " << useThreads);
 
-            // --- 2. KERNEL INVOCATION ---
             auto kernel = std::make_unique<IfcGeom::OpenCascadeKernel>(settings);
             IfcGeom::Iterator geomIter(std::move(kernel), settings, ifcDb.get(), useThreads);
             if (!geomIter.initialize()) { setErr("Geometry iterator failed to initialise."); return nullptr; }
 
             if (state) state->SetStatus("Triangulating geometry...", 0.35f);
-            
+
             RenderMesh mesh;
             float minB[3] = { kFloatMax, kFloatMax, kFloatMax };
             float maxB[3] = { kFloatMin, kFloatMin, kFloatMin };
 
-            // --- 3. PSEUDO-ARENA RESERVATION ---
-            size_t estimatedVertices = (fileSize / 1024) * 15; 
+            size_t estimatedVertices = (fileSize / 1024) * 15;
             size_t estimatedIndices = estimatedVertices * 3;
             size_t estimatedSubMeshes = (fileSize / 1024) / 10;
-            
+
             mesh.vertices.reserve(estimatedVertices);
             mesh.indices.reserve(estimatedIndices);
             mesh.subMeshes.reserve(estimatedSubMeshes);
-            
+
             BIM_LOG("IfcLoader", "Reserved VRAM capacity for ~" << estimatedVertices << " vertices based on file size.");
 
             do {
-                // --- 4. LIVE PROGRESS TRACKING ---
                 if (state) {
                     float kernelProg = static_cast<float>(geomIter.progress()) / 100.0f;
                     state->SetStatus("Triangulating geometry...", 0.35f + (kernelProg * 0.55f));
@@ -168,29 +163,113 @@ namespace BimCore {
                 }
             } while (geomIter.next());
 
-            if (state) state->SetStatus("Uploading to GPU...", 0.95f);
-
             for (int j = 0; j < 3; ++j) {
                 mesh.minBounds[j] = minB[j];
                 mesh.maxBounds[j] = maxB[j];
                 mesh.center[j] = (minB[j] + maxB[j]) * 0.5f;
             }
-            
+
             mesh.vertices.shrink_to_fit();
             mesh.indices.shrink_to_fit();
             mesh.subMeshes.shrink_to_fit();
-            
             mesh.originalVertices = mesh.vertices;
-            
+
+            BIM_LOG("IfcLoader", "Geometry loaded — " << mesh.vertices.size() << " verts, " << mesh.subMeshes.size() << " submeshes.");
+
+            auto doc = std::make_shared<BimDocument>(ifcDb, std::move(mesh), filepath);
+
+            // --- 5. NEW: DIRECT TEXT-BASED HIERARCHY PARSER ---
+            // Bypasses all unstable C++ Reflection API versions completely
+            if (state) state->SetStatus("Resolving spatial hierarchy...", 0.95f);
+
+            std::unordered_map<int, std::string> stepIdToGuid;
+            std::vector<std::pair<int, std::vector<int>>> rawAggregates;
+
+            std::ifstream infile(filepath);
+            std::string line, buffer;
+            while (std::getline(infile, line)) {
+                line.erase(std::remove(line.begin(), line.end(), '\r'), line.end());
+                line.erase(std::remove(line.begin(), line.end(), '\n'), line.end());
+                buffer += line;
+                if (buffer.empty()) continue;
+
+                if (buffer.back() == ';') {
+                    if (buffer[0] == '#') {
+                        size_t eqPos = buffer.find('=');
+                        if (eqPos != std::string::npos) {
+                            int id = std::stoi(buffer.substr(1, eqPos - 1));
+
+                            size_t q1 = buffer.find('\'', eqPos);
+                            if (q1 != std::string::npos) {
+                                size_t q2 = buffer.find('\'', q1 + 1);
+                                if (q2 != std::string::npos && (q2 - q1) == 23) {
+                                    stepIdToGuid[id] = buffer.substr(q1 + 1, 22);
+                                }
+                            }
+
+                            if (buffer.find("IFCRELAGGREGATES") != std::string::npos) {
+                                size_t listEnd = buffer.find_last_of(')');
+                                if (listEnd != std::string::npos) listEnd = buffer.find_last_of(')', listEnd - 1);
+                                size_t listStart = std::string::npos;
+                                if (listEnd != std::string::npos) listStart = buffer.find_last_of('(', listEnd);
+
+                                if (listStart != std::string::npos && listEnd != std::string::npos && listStart < listEnd) {
+                                    size_t relatingEnd = buffer.find_last_of(',', listStart);
+                                    if (relatingEnd != std::string::npos) {
+                                        size_t relatingStart = buffer.find_last_of(",(", relatingEnd - 1);
+                                        if (relatingStart != std::string::npos) {
+                                            std::string relatingStr = buffer.substr(relatingStart + 1, relatingEnd - relatingStart - 1);
+                                            size_t hashPos = relatingStr.find('#');
+                                            if (hashPos != std::string::npos) {
+                                                int parentId = std::stoi(relatingStr.substr(hashPos + 1));
+                                                std::vector<int> childIds;
+                                                std::string childrenStr = buffer.substr(listStart + 1, listEnd - listStart - 1);
+                                                size_t pos = 0;
+                                                while ((pos = childrenStr.find('#', pos)) != std::string::npos) {
+                                                    int childId = std::stoi(childrenStr.substr(pos + 1));
+                                                    childIds.push_back(childId);
+                                                    pos++;
+                                                }
+                                                if (!childIds.empty()) {
+                                                    rawAggregates.push_back({parentId, childIds});
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    buffer.clear();
+                }
+            }
+
+            std::unordered_map<std::string, std::string> childToParent;
+            std::unordered_map<std::string, std::vector<std::string>> parentToChildren;
+
+            for (const auto& agg : rawAggregates) {
+                if (stepIdToGuid.count(agg.first) > 0) {
+                    std::string pGuid = stepIdToGuid[agg.first];
+                    for (int cId : agg.second) {
+                        if (stepIdToGuid.count(cId) > 0) {
+                            std::string cGuid = stepIdToGuid[cId];
+                            childToParent[cGuid] = pGuid;
+                            parentToChildren[pGuid].push_back(cGuid);
+                        }
+                    }
+                }
+            }
+
+            doc->SetHierarchy(childToParent, parentToChildren);
+            BIM_LOG("IfcLoader", "Hierarchy resolved via direct text parsing: " << parentToChildren.size() << " assemblies found.");
+
             if (state) state->SetStatus("Ready.", 1.0f);
-            BIM_LOG("IfcLoader", "Load complete — " << mesh.vertices.size() << " verts, " << mesh.subMeshes.size() << " submeshes.");
-            
-            return std::make_shared<BimDocument>(ifcDb, std::move(mesh), filepath);
-            
-        } catch (const std::exception& e) { 
+            return doc;
+
+        } catch (const std::exception& e) {
             setErr(std::string("Exception: ") + e.what());
-        } catch (...) { 
-            setErr("Unknown fatal exception during parse."); 
+        } catch (...) {
+            setErr("Unknown fatal exception during parse.");
         }
         return nullptr;
     }

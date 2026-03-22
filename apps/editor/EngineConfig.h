@@ -14,9 +14,13 @@ namespace BimCore {
         float MouseSensitivityX = 0.005f;
         float MouseSensitivityY = 0.005f;
 
-        // --- FIXED: Halved the default ZoomSpeed directly in the config! ---
         float ZoomSpeed = 1.0f;
         float ZoomSlowMultiplier = 0.2f;
+
+        float CadPanSpeed        = 250.0f;
+        float CadOrbitSpeed      = 250.0f;
+        float KeyboardOrbitSpeed = 500.0f;
+        float FlightMouseSpeed   = 5.0f;
 
         float MaxExplodeFactor = 5.0f;
         std::string AutoLoadPath = "";
@@ -43,6 +47,7 @@ namespace BimCore {
         int KeyToolSelect = 49;
         int KeyToolPan = 50;
         int KeyToolOrbit = 51;
+        int KeyToolMeasure = 77; // --- FIXED: Mapped to 'M' (ASCII 77) ---
         int CadPanButton = 2;
         int CadOrbitModifier = 340;
 

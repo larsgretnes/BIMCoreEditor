@@ -54,7 +54,10 @@ namespace BimCore {
         if (m_glassVertexBuffer)             wgpuBufferRelease(m_glassVertexBuffer);
         if (m_aabbIndexBuffer)               wgpuBufferRelease(m_aabbIndexBuffer);
         if (m_aabbVertexBuffer)              wgpuBufferRelease(m_aabbVertexBuffer);
+
+        // --- RESTORED ---
         if (m_lineIndexBuffer)               wgpuBufferRelease(m_lineIndexBuffer);
+
         if (m_activeTransparentIndexBuffer)  wgpuBufferRelease(m_activeTransparentIndexBuffer);
         if (m_activeIndexBuffer)             wgpuBufferRelease(m_activeIndexBuffer);
         if (m_indexBuffer)                   wgpuBufferRelease(m_indexBuffer);
@@ -328,8 +331,6 @@ namespace BimCore {
     }
 
     void GraphicsContext::CreateHighlightPipeline() {
-        WGPUShaderModule shader = CreateShaderModule(Shaders::kHighlightWGSL);
-
         WGPUBindGroupLayoutEntry bgle[2] = {};
         bgle[0].binding = 0; bgle[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
         bgle[0].buffer.type = WGPUBufferBindingType_Uniform; bgle[0].buffer.minBindingSize = sizeof(SceneUniforms);
@@ -347,26 +348,60 @@ namespace BimCore {
         WGPUBlendState blend = {};
         blend.color = { WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha };
         blend.alpha = { WGPUBlendOperation_Add, WGPUBlendFactor_One,      WGPUBlendFactor_OneMinusSrcAlpha };
-        WGPUColorTargetState target = {}; target.format = m_surfaceFormat; target.blend = &blend; target.writeMask = WGPUColorWriteMask_All;
-        WGPUFragmentState frag = {}; frag.module = shader; frag.entryPoint = WGPUStringView{ "fs_main", 7 }; frag.targetCount = 1; frag.targets = &target;
 
-        WGPUDepthStencilState ds = {}; ds.format = WGPUTextureFormat_Depth32Float;
-        ds.depthCompare = WGPUCompareFunction_LessEqual; ds.depthWriteEnabled = WGPUOptionalBool_False;
+        WGPUColorTargetState target = {};
+        target.format = m_surfaceFormat;
+        target.blend = &blend;
+        target.writeMask = WGPUColorWriteMask_All;
+
+        WGPUDepthStencilState ds = {};
+        ds.format = WGPUTextureFormat_Depth32Float;
+
+        // --- X-RAY MAGIC ---
+        // Setting depthCompare to Always means the highlight completely ignores walls and draws over everything!
+        ds.depthCompare = WGPUCompareFunction_Always;
+        ds.depthWriteEnabled = WGPUOptionalBool_False;
 
         WGPURenderPipelineDescriptor pd = {};
-        pd.layout = layout; pd.vertex.module = shader;
+        pd.layout = layout;
         pd.vertex.entryPoint = WGPUStringView{ "vs_main", 7 };
-        pd.vertex.bufferCount = 1; pd.vertex.buffers = &vbl;
+        pd.vertex.bufferCount = 1;
+        pd.vertex.buffers = &vbl;
+        pd.primitive.frontFace = WGPUFrontFace_CCW;
+        pd.depthStencil = &ds;
+        pd.multisample.count = 1;
+        pd.multisample.mask = ~0u;
+
+        // --- Style 0: Solid Ghost Highlight ---
+        WGPUShaderModule solidShader = CreateShaderModule(Shaders::kHighlightSolidWGSL);
+        WGPUFragmentState fragSolid = {};
+        fragSolid.module = solidShader;
+        fragSolid.entryPoint = WGPUStringView{ "fs_main", 7 };
+        fragSolid.targetCount = 1;
+        fragSolid.targets = &target;
+
+        pd.vertex.module = solidShader;
+        pd.fragment = &fragSolid;
         pd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
-        pd.primitive.cullMode = WGPUCullMode_Back; pd.primitive.frontFace = WGPUFrontFace_CCW;
-        pd.depthStencil = &ds; pd.fragment = &frag;
-        pd.multisample.count = 1; pd.multisample.mask = ~0u;
+        pd.primitive.cullMode = WGPUCullMode_Back;
         m_highlightSolidPipeline = wgpuDeviceCreateRenderPipeline(m_device, &pd);
 
+        // --- Style 1: Wireframe Line Outline ---
+        WGPUShaderModule outlineShader = CreateShaderModule(Shaders::kHighlightOutlineWGSL);
+        WGPUFragmentState fragOutline = {};
+        fragOutline.module = outlineShader;
+        fragOutline.entryPoint = WGPUStringView{ "fs_main", 7 };
+        fragOutline.targetCount = 1;
+        fragOutline.targets = &target;
+
+        pd.vertex.module = outlineShader;
+        pd.fragment = &fragOutline;
         pd.primitive.topology = WGPUPrimitiveTopology_LineList;
+        pd.primitive.cullMode = WGPUCullMode_None;
         m_highlightOutlinePipeline = wgpuDeviceCreateRenderPipeline(m_device, &pd);
 
-        wgpuShaderModuleRelease(shader);
+        wgpuShaderModuleRelease(solidShader);
+        wgpuShaderModuleRelease(outlineShader);
         wgpuBindGroupLayoutRelease(bgl);
         wgpuPipelineLayoutRelease(layout);
     }
@@ -482,7 +517,9 @@ namespace BimCore {
         if (m_indexBuffer)  { wgpuBufferRelease(m_indexBuffer);  m_indexBuffer  = nullptr; }
         if (m_activeIndexBuffer) { wgpuBufferRelease(m_activeIndexBuffer); m_activeIndexBuffer = nullptr; }
         if (m_activeTransparentIndexBuffer) { wgpuBufferRelease(m_activeTransparentIndexBuffer); m_activeTransparentIndexBuffer = nullptr; }
-        if (m_lineIndexBuffer)  { wgpuBufferRelease(m_lineIndexBuffer);  m_lineIndexBuffer  = nullptr; }
+
+        // --- RESTORED: Line Index Buffer generator ---
+        if (m_lineIndexBuffer) { wgpuBufferRelease(m_lineIndexBuffer); m_lineIndexBuffer = nullptr; }
 
         auto makeBuffer = [&](WGPUBufferUsage usage, const void* data, size_t byteSize) {
             WGPUBufferDescriptor desc = {};
@@ -506,6 +543,7 @@ namespace BimCore {
             m_activeTransparentIndexCount = 0;
         }
 
+        // --- RESTORED: Create 2 indices for every edge to map perfectly with the triangle start/count indexes ---
         std::vector<uint32_t> lineIndices;
         lineIndices.reserve(indices.size() * 2);
         for (size_t i = 0; i + 2 < indices.size(); i += 3) {
@@ -667,13 +705,23 @@ namespace BimCore {
             wgpuRenderPassEncoderDrawIndexed(rp, m_activeTransparentIndexCount, 1, 0, 0, 0);
         }
 
-        if (m_hasHighlight && !m_highlightRanges.empty() && m_vertexBuffer && m_indexBuffer) {
-            WGPURenderPipeline hlPipeline = (m_highlightStyle == 1) ? m_highlightOutlinePipeline : m_highlightSolidPipeline;
-            wgpuRenderPassEncoderSetPipeline(rp, hlPipeline);
-            wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_vertexBuffer, 0, WGPU_WHOLE_SIZE);
-            wgpuRenderPassEncoderSetIndexBuffer(rp, m_indexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
-            for (const auto& range : m_highlightRanges) {
-                wgpuRenderPassEncoderDrawIndexed(rp, range.indexCount, 1, range.startIndex, 0, 0);
+        if (m_hasHighlight && !m_highlightRanges.empty() && m_vertexBuffer) {
+            // --- NEW: Render X-Ray lines or solid ghost ---
+            if (m_highlightStyle == 1 && m_lineIndexBuffer) {
+                wgpuRenderPassEncoderSetPipeline(rp, m_highlightOutlinePipeline);
+                wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_vertexBuffer, 0, WGPU_WHOLE_SIZE);
+                wgpuRenderPassEncoderSetIndexBuffer(rp, m_lineIndexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+                for (const auto& range : m_highlightRanges) {
+                    // Multiply index count and start by 2 because lines have 2 indices per 1 triangle edge
+                    wgpuRenderPassEncoderDrawIndexed(rp, range.indexCount * 2, 1, range.startIndex * 2, 0, 0);
+                }
+            } else if (m_highlightStyle == 0 && m_indexBuffer) {
+                wgpuRenderPassEncoderSetPipeline(rp, m_highlightSolidPipeline);
+                wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_vertexBuffer, 0, WGPU_WHOLE_SIZE);
+                wgpuRenderPassEncoderSetIndexBuffer(rp, m_indexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+                for (const auto& range : m_highlightRanges) {
+                    wgpuRenderPassEncoderDrawIndexed(rp, range.indexCount, 1, range.startIndex, 0, 0);
+                }
             }
         }
 
@@ -710,7 +758,6 @@ namespace BimCore {
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
 
-        // --- FIXED: Disabled UI Keyboard Navigation so arrow keys control the camera! ---
         io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
 
         io.Fonts->AddFontDefault();
@@ -732,7 +779,6 @@ namespace BimCore {
         ImGui_ImplWGPU_Init(&wgpuInfo);
     }
 
-    // ---> MAKE SURE THIS FUNCTION IS HERE! <---
     void GraphicsContext::ShutdownImGui() {
         ImGui_ImplWGPU_Shutdown();
         ImGui_ImplGlfw_Shutdown();

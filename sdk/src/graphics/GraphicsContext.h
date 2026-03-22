@@ -19,7 +19,6 @@ namespace BimCore {
         float color[3];
     };
 
-    // Matches the WGSL struct layout exactly — keep fields 16-byte aligned
     struct SceneUniforms {
         glm::mat4 viewProjection;   // 64 bytes  offset 0
         glm::vec4 sunDirection;     // 16 bytes  offset 64
@@ -116,6 +115,8 @@ namespace BimCore {
         uint32_t   m_activeIndexCount           = 0;
         WGPUBuffer m_activeTransparentIndexBuffer = nullptr;
         uint32_t   m_activeTransparentIndexCount  = 0;
+
+        // --- RESTORED: This is the missing buffer! ---
         WGPUBuffer m_lineIndexBuffer            = nullptr;
 
         WGPUBuffer m_aabbVertexBuffer = nullptr;

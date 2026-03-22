@@ -2,47 +2,51 @@
 // BimCore/scene/Raycaster.cpp
 // =============================================================================
 #include "Raycaster.h"
-#include <cmath>
+#include <limits>
 
 namespace BimCore {
 
-    // Möller–Trumbore algorithm
-    static bool RayTriangle(const float orig[3], const float dir[3],
-                            const float v0[3], const float v1[3], const float v2[3],
-                            float& outT)
+    bool Raycaster::RayTriangle(const glm::vec3& ro, const glm::vec3& rd,
+                                const float* v0, const float* v1, const float* v2, float& tOut)
     {
-        float e1[3] = { v1[0]-v0[0], v1[1]-v0[1], v1[2]-v0[2] };
-        float e2[3] = { v2[0]-v0[0], v2[1]-v0[1], v2[2]-v0[2] };
-        float h[3]  = { dir[1]*e2[2]-dir[2]*e2[1],
-            dir[2]*e2[0]-dir[0]*e2[2],
-            dir[0]*e2[1]-dir[1]*e2[0] };
-            float a = e1[0]*h[0] + e1[1]*h[1] + e1[2]*h[2];
-            if (a > -1e-6f && a < 1e-6f) return false;
-            float f = 1.0f / a;
-        float s[3] = { orig[0]-v0[0], orig[1]-v0[1], orig[2]-v0[2] };
-        float u = f * (s[0]*h[0] + s[1]*h[1] + s[2]*h[2]);
+        const float EPSILON = 1e-7f;
+        glm::vec3 edge1(v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]);
+        glm::vec3 edge2(v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]);
+        glm::vec3 h = glm::cross(rd, edge2);
+        float a = glm::dot(edge1, h);
+
+        if (a > -EPSILON && a < EPSILON) return false;
+
+        float f = 1.0f / a;
+        glm::vec3 s(ro.x - v0[0], ro.y - v0[1], ro.z - v0[2]);
+        float u = f * glm::dot(s, h);
+
         if (u < 0.0f || u > 1.0f) return false;
-        float q[3] = { s[1]*e1[2]-s[2]*e1[1],
-            s[2]*e1[0]-s[0]*e1[2],
-            s[0]*e1[1]-s[1]*e1[0] };
-            float v = f * (dir[0]*q[0] + dir[1]*q[1] + dir[2]*q[2]);
-            if (v < 0.0f || u + v > 1.0f) return false;
-            float t = f * (e2[0]*q[0] + e2[1]*q[1] + e2[2]*q[2]);
-        if (t > 1e-5f) {
-            outT = t;
+
+        glm::vec3 q = glm::cross(s, edge1);
+        float v = f * glm::dot(rd, q);
+
+        if (v < 0.0f || u + v > 1.0f) return false;
+
+        float t = f * glm::dot(edge2, q);
+        if (t > EPSILON) {
+            tOut = t;
             return true;
         }
+
         return false;
     }
 
     HitResult Raycaster::CastRay(const Ray& ray, const RenderMesh& mesh,
                                  float cXMin, float cXMax, float cYMin, float cYMax, float cZMin, float cZMax,
-                                 const std::unordered_set<std::string>& hidden)
+                                 const std::unordered_set<std::string>& hidden,
+                                 bool skipOpenings)
     {
         HitResult best;
 
         for (const auto& sub : mesh.subMeshes) {
             if (hidden.count(sub.guid)) continue;
+            if (skipOpenings && (sub.type == "IfcOpeningElement" || sub.type == "IfcSpace")) continue;
 
             const uint32_t end = sub.startIndex + sub.indexCount;
             for (uint32_t i = sub.startIndex; i + 2 < end; i += 3) {
@@ -50,7 +54,6 @@ namespace BimCore {
                 const float* v1 = mesh.vertices[mesh.indices[i+1]].position;
                 const float* v2 = mesh.vertices[mesh.indices[i+2]].position;
 
-                // Broad-phase rejection for all 6 planes
                 if (v0[0] > cXMax && v1[0] > cXMax && v2[0] > cXMax) continue;
                 if (v0[0] < cXMin && v1[0] < cXMin && v2[0] < cXMin) continue;
                 if (v0[1] > cYMax && v1[1] > cYMax && v2[1] > cYMax) continue;
@@ -71,6 +74,10 @@ namespace BimCore {
 
                     best.hit = true;
                     best.distance = t;
+                    best.hitPoint = glm::vec3(hX, hY, hZ);
+                    best.hitV0 = glm::vec3(v0[0], v0[1], v0[2]); // --- NEW ---
+                    best.hitV1 = glm::vec3(v1[0], v1[1], v1[2]);
+                    best.hitV2 = glm::vec3(v2[0], v2[1], v2[2]);
                     best.hitGuid = sub.guid;
                     best.hitType = sub.type;
                     best.hitStartIndex = sub.startIndex;
@@ -80,4 +87,5 @@ namespace BimCore {
         }
         return best;
     }
+
 } // namespace BimCore

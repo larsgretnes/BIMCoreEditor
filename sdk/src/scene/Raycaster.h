@@ -1,37 +1,43 @@
-#pragma once
 // =============================================================================
 // BimCore/scene/Raycaster.h
-// CPU-side ray-triangle intersection against the render mesh.
 // =============================================================================
-#include <string>
-#include <unordered_set>
+#pragma once
 #include "BimDocument.h"
-#include "Core.h"
+#include <glm/glm.hpp>
+#include <unordered_set>
 
 namespace BimCore {
 
-struct Ray {
-    float origin[3];
-    float direction[3];
-};
+    struct Ray {
+        glm::vec3 origin;
+        glm::vec3 direction;
+    };
 
-struct HitResult {
-    bool        hit          = false;
-    float       distance     = kFloatMax;
-    std::string hitGuid;
-    std::string hitType;
-    uint32_t    hitStartIndex = 0;
-    uint32_t    hitIndexCount = 0;
-};
+    struct HitResult {
+        bool        hit = false;
+        float       distance = 1e9f;
+        glm::vec3   hitPoint;
+        glm::vec3   hitV0; // --- NEW: Exact triangle vertices ---
+        glm::vec3   hitV1;
+        glm::vec3   hitV2;
+        std::string hitGuid;
+        std::string hitType;
+        uint32_t    hitStartIndex = 0;
+        uint32_t    hitIndexCount = 0;
+    };
 
-class Raycaster {
-public:
-    // hiddenGuids uses unordered_set — O(1) lookup instead of O(n) per triangle
-    static HitResult CastRay(const Ray& ray, const RenderMesh& mesh,
-                             float clipXMin, float clipXMax,
-                             float clipYMin, float clipYMax,
-                             float clipZMin, float clipZMax,
-                             const std::unordered_set<std::string>& hiddenObjects);
-};
+    class Raycaster {
+    public:
+        static HitResult CastRay(const Ray& ray, const RenderMesh& mesh,
+                                 float clipXMin, float clipXMax,
+                                 float clipYMin, float clipYMax,
+                                 float clipZMin, float clipZMax,
+                                 const std::unordered_set<std::string>& hiddenObjects,
+                                 bool skipOpeningsAndSpaces);
+
+    private:
+        static bool RayTriangle(const glm::vec3& ro, const glm::vec3& rd,
+                                const float* v0, const float* v1, const float* v2, float& tOut);
+    };
 
 } // namespace BimCore

@@ -4,6 +4,7 @@
 #include "InputController.h"
 #include <imgui.h>
 #include <GLFW/glfw3.h>
+#include <algorithm>
 #include "Core.h"
 
 namespace BimCore {
@@ -33,6 +34,18 @@ namespace BimCore {
             if (window.IsKeyPressed(config.KeyToolSelect)) selection.activeTool = InteractionTool::Select;
             if (window.IsKeyPressed(config.KeyToolPan))    selection.activeTool = InteractionTool::Pan;
             if (window.IsKeyPressed(config.KeyToolOrbit))  selection.activeTool = InteractionTool::Orbit;
+
+            // --- FIXED: Measure tool is now an independent toggle via the 'M' key ---
+            static bool mWasDown = false;
+            bool mNow = window.IsKeyPressed(config.KeyToolMeasure);
+            if (mNow && !mWasDown) {
+                selection.measureToolActive = !selection.measureToolActive;
+                if (!selection.measureToolActive) {
+                    selection.completedMeasurements.clear();
+                    selection.isMeasuringActive = false;
+                }
+            }
+            mWasDown = mNow;
 
             const bool tabNow = window.IsKeyPressed(config.KeyToggleNavigation);
             if (tabNow && !m_tabWasDown) {
@@ -109,8 +122,7 @@ namespace BimCore {
         if (m_navMode == NavigationMode::CAD) {
 
             if (!uiTyping && !uiHovered) {
-                // --- FIXED: Increased arrow key steering speed by 5x (from 100 to 500) ---
-                float keyboardOrbitSpeed = 500.0f * deltaTime;
+                float keyboardOrbitSpeed = config.KeyboardOrbitSpeed * deltaTime;
                 if (window.IsKeyPressed(GLFW_KEY_UP))    camera.ProcessOrbit(0.0f, keyboardOrbitSpeed);
                 if (window.IsKeyPressed(GLFW_KEY_DOWN))  camera.ProcessOrbit(0.0f, -keyboardOrbitSpeed);
                 if (window.IsKeyPressed(GLFW_KEY_LEFT))  camera.ProcessOrbit(-keyboardOrbitSpeed, 0.0f);
@@ -118,25 +130,94 @@ namespace BimCore {
             }
 
             if (!uiHovered) {
-                bool leftClickPan   = (selection.activeTool == InteractionTool::Pan) && window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
-                bool leftClickOrbit = (selection.activeTool == InteractionTool::Orbit) && window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
+                bool leftClickPan   = !selection.measureToolActive && (selection.activeTool == InteractionTool::Pan) && window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
+                bool leftClickOrbit = !selection.measureToolActive && (selection.activeTool == InteractionTool::Orbit) && window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
                 bool mmbPan   = window.IsMouseButtonPressed(config.CadPanButton) && !window.IsKeyPressed(config.CadOrbitModifier);
                 bool mmbOrbit = window.IsMouseButtonPressed(config.CadPanButton) && window.IsKeyPressed(config.CadOrbitModifier);
                 bool rmbOrbit = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT);
 
                 if (leftClickPan || mmbPan) {
-                    camera.ProcessPan(rawDeltaX * config.MouseSensitivityX * 250.0f, -rawDeltaY * config.MouseSensitivityY * 250.0f);
+                    camera.ProcessPan(rawDeltaX * config.MouseSensitivityX * config.CadPanSpeed, -rawDeltaY * config.MouseSensitivityY * config.CadPanSpeed);
                 } else if (leftClickOrbit || mmbOrbit || rmbOrbit) {
-                    camera.ProcessOrbit(rawDeltaX * config.MouseSensitivityX * 250.0f, -rawDeltaY * config.MouseSensitivityY * 250.0f);
+                    camera.ProcessOrbit(rawDeltaX * config.MouseSensitivityX * config.CadOrbitSpeed, -rawDeltaY * config.MouseSensitivityY * config.CadOrbitSpeed);
                 }
             }
 
-            if (selection.activeTool == InteractionTool::Select && !uiHovered) {
+            if (selection.measureToolActive && !uiHovered) {
+                Ray ray = ScreenToWorldRay(mx, my, window.GetWidth(), window.GetHeight(), camera.GetViewMatrix(), camera.GetProjectionMatrix(), camera.GetPosition());
+                HitResult hit = Raycaster::CastRay(ray, document->GetGeometry(), selection.clipXMin, selection.clipXMax, selection.clipYMin, selection.clipYMax, selection.clipZMin, selection.clipZMax, selection.hiddenObjects, !selection.showOpeningsAndSpaces);
+
+                selection.isHoveringGeometry = hit.hit;
+                if (hit.hit) {
+                    bool altPressed = window.IsKeyPressed(GLFW_KEY_LEFT_ALT);
+                    if (altPressed) {
+                        selection.currentSnapType = SnapType::Face;
+                        selection.currentSnapPoint = hit.hitPoint;
+                    } else {
+                        float threshold = hit.distance * 0.02f;
+
+                        float d0 = glm::length(hit.hitPoint - hit.hitV0);
+                        float d1 = glm::length(hit.hitPoint - hit.hitV1);
+                        float d2 = glm::length(hit.hitPoint - hit.hitV2);
+
+                        float minDist = std::min({d0, d1, d2});
+                        if (minDist < threshold) {
+                            selection.currentSnapType = SnapType::Vertex;
+                            if (minDist == d0) selection.currentSnapPoint = hit.hitV0;
+                            else if (minDist == d1) selection.currentSnapPoint = hit.hitV1;
+                            else selection.currentSnapPoint = hit.hitV2;
+                        } else {
+                            auto closestOnLine = [](const glm::vec3& p, const glm::vec3& a, const glm::vec3& b) {
+                                glm::vec3 ab = b - a;
+                                float t = std::clamp(glm::dot(p - a, ab) / glm::dot(ab, ab), 0.0f, 1.0f);
+                                return a + t * ab;
+                            };
+
+                            glm::vec3 e0 = closestOnLine(hit.hitPoint, hit.hitV0, hit.hitV1);
+                            glm::vec3 e1 = closestOnLine(hit.hitPoint, hit.hitV1, hit.hitV2);
+                            glm::vec3 e2 = closestOnLine(hit.hitPoint, hit.hitV2, hit.hitV0);
+
+                            float ed0 = glm::length(hit.hitPoint - e0);
+                            float ed1 = glm::length(hit.hitPoint - e1);
+                            float ed2 = glm::length(hit.hitPoint - e2);
+
+                            float minEd = std::min({ed0, ed1, ed2});
+                            if (minEd < threshold) {
+                                selection.currentSnapType = SnapType::Edge;
+                                if (minEd == ed0) { selection.currentSnapPoint = e0; selection.currentSnapEdgeV0 = hit.hitV0; selection.currentSnapEdgeV1 = hit.hitV1; }
+                                else if (minEd == ed1) { selection.currentSnapPoint = e1; selection.currentSnapEdgeV0 = hit.hitV1; selection.currentSnapEdgeV1 = hit.hitV2; }
+                                else { selection.currentSnapPoint = e2; selection.currentSnapEdgeV0 = hit.hitV2; selection.currentSnapEdgeV1 = hit.hitV0; }
+                            } else {
+                                selection.currentSnapType = SnapType::Face;
+                                selection.currentSnapPoint = hit.hitPoint;
+                            }
+                        }
+                    }
+
+                    bool mouseDown = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
+                    if (mouseDown && !m_mouseWasDown) {
+                        if (!selection.isMeasuringActive) {
+                            selection.measureStartPoint = selection.currentSnapPoint;
+                            selection.isMeasuringActive = true;
+                        } else {
+                            selection.completedMeasurements.push_back({selection.measureStartPoint, selection.currentSnapPoint});
+                            selection.isMeasuringActive = false;
+                        }
+                    }
+                } else {
+                    selection.currentSnapType = SnapType::None;
+                }
+
+                m_mouseWasDown = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
+
+            } else if (selection.activeTool == InteractionTool::Select && !uiHovered) {
                 HandleMousePicking(window, camera, document, selection, config);
+            } else {
+                m_mouseWasDown = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
             }
 
         } else {
-            camera.ProcessMouseMovement(rawDeltaX * config.MouseSensitivityX * 5.0f, -rawDeltaY * config.MouseSensitivityY * 5.0f);
+            camera.ProcessMouseMovement(rawDeltaX * config.MouseSensitivityX * config.FlightMouseSpeed, -rawDeltaY * config.MouseSensitivityY * config.FlightMouseSpeed);
         }
     }
 
@@ -154,27 +235,84 @@ namespace BimCore {
             float cZMin = selection.clipZMin;
             float cZMax = selection.clipZMax;
 
-            HitResult hit = Raycaster::CastRay(ray, document->GetGeometry(), cXMin, cXMax, cYMin, cYMax, cZMin, cZMax, selection.hiddenObjects);
+            HitResult hit = Raycaster::CastRay(ray, document->GetGeometry(), cXMin, cXMax, cYMin, cYMax, cZMin, cZMax, selection.hiddenObjects, !selection.showOpeningsAndSpaces);
 
             bool isCtrlPressed = window.IsKeyPressed(GLFW_KEY_LEFT_CONTROL) || window.IsKeyPressed(GLFW_KEY_RIGHT_CONTROL);
 
             if (hit.hit) {
                 if (!isCtrlPressed) selection.objects.clear();
 
-                auto it = std::find_if(selection.objects.begin(), selection.objects.end(),
-                                       [&](const SelectedObject& o) { return o.guid == hit.hitGuid; });
+                std::string baseClickGuid = hit.hitGuid.length() >= 22 ? hit.hitGuid.substr(0, 22) : hit.hitGuid;
 
-                if (it != selection.objects.end()) {
-                    if (isCtrlPressed) selection.objects.erase(it);
+                if (selection.selectAssemblies) {
+                    std::string rootGuid = baseClickGuid;
+                    while (true) {
+                        std::string p = document->GetParent(rootGuid);
+                        if (p.empty()) break;
+                        rootGuid = p;
+                    }
+
+                    bool toggleOff = false;
+                    if (isCtrlPressed) {
+                        auto it = std::find_if(selection.objects.begin(), selection.objects.end(),
+                                               [&](const SelectedObject& o) { return o.guid == hit.hitGuid; });
+                        if (it != selection.objects.end()) toggleOff = true;
+                    }
+
+                    std::vector<std::string> familyBaseGuids;
+                    std::vector<std::string> stack = { rootGuid };
+                    while (!stack.empty()) {
+                        std::string curr = stack.back();
+                        stack.pop_back();
+                        familyBaseGuids.push_back(curr);
+                        std::vector<std::string> kids = document->GetChildren(curr);
+                        stack.insert(stack.end(), kids.begin(), kids.end());
+                    }
+
+                    if (toggleOff) {
+                        selection.objects.erase(
+                            std::remove_if(selection.objects.begin(), selection.objects.end(),
+                                           [&](const SelectedObject& o) {
+                                               std::string bg = o.guid.length() >= 22 ? o.guid.substr(0, 22) : o.guid;
+                                               return std::find(familyBaseGuids.begin(), familyBaseGuids.end(), bg) != familyBaseGuids.end();
+                                           }
+                            ), selection.objects.end()
+                        );
+                    } else {
+                        for (const auto& sub : document->GetGeometry().subMeshes) {
+                            std::string bg = sub.guid.length() >= 22 ? sub.guid.substr(0, 22) : sub.guid;
+                            if (std::find(familyBaseGuids.begin(), familyBaseGuids.end(), bg) != familyBaseGuids.end()) {
+                                auto it = std::find_if(selection.objects.begin(), selection.objects.end(),
+                                                       [&](const SelectedObject& o) { return o.guid == sub.guid; });
+                                if (it == selection.objects.end()) {
+                                    SelectedObject so;
+                                    so.guid = sub.guid;
+                                    so.type = sub.type;
+                                    so.startIndex = sub.startIndex;
+                                    so.indexCount = sub.indexCount;
+                                    so.properties = document->GetElementProperties(bg);
+                                    selection.objects.push_back(so);
+                                }
+                            }
+                        }
+                    }
                 } else {
-                    SelectedObject so;
-                    so.guid = hit.hitGuid;
-                    so.type = hit.hitType;
-                    so.startIndex = hit.hitStartIndex;
-                    so.indexCount = hit.hitIndexCount;
-                    so.properties = document->GetElementProperties(so.guid);
-                    selection.objects.push_back(so);
+                    auto it = std::find_if(selection.objects.begin(), selection.objects.end(),
+                                           [&](const SelectedObject& o) { return o.guid == hit.hitGuid; });
+
+                    if (it != selection.objects.end()) {
+                        if (isCtrlPressed) selection.objects.erase(it);
+                    } else {
+                        SelectedObject so;
+                        so.guid = hit.hitGuid;
+                        so.type = hit.hitType;
+                        so.startIndex = hit.hitStartIndex;
+                        so.indexCount = hit.hitIndexCount;
+                        so.properties = document->GetElementProperties(baseClickGuid);
+                        selection.objects.push_back(so);
+                    }
                 }
+
                 selection.selectionChanged = true;
             } else {
                 if (!isCtrlPressed) {

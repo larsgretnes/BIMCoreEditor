@@ -72,9 +72,9 @@ fn clip_check(wpos : vec3<f32>) -> bool {
 )";
 
 // -------------------------------------------------------------------------
-// Selection Highlight Shader
+// Selection Solid Overlay Shader (Ghosted)
 // -------------------------------------------------------------------------
-static constexpr const char* kHighlightWGSL = R"(
+static constexpr const char* kHighlightSolidWGSL = R"(
 struct SceneUniforms {
     viewProjection : mat4x4<f32>, sunDirection : vec4<f32>, highlightColor : vec4<f32>,
     clipMin : vec4<f32>, clipMax : vec4<f32>, clipActiveMin : vec4<f32>, clipActiveMax : vec4<f32>,
@@ -93,7 +93,38 @@ struct VertOut { @builtin(position) clip : vec4<f32>, @location(0) wpos : vec3<f
     if (scene.clipActiveMin.y > 0.5 && in.wpos.y < scene.clipMin.y) { discard; }
     if (scene.clipActiveMax.z > 0.5 && in.wpos.z > scene.clipMax.z) { discard; }
     if (scene.clipActiveMin.z > 0.5 && in.wpos.z < scene.clipMin.z) { discard; }
-    return scene.highlightColor;
+    return vec4<f32>(scene.highlightColor.rgb, 0.4); // 40% opaque ghosting
+}
+)";
+
+// -------------------------------------------------------------------------
+// Selection Wireframe Outline Shader (X-Ray)
+// -------------------------------------------------------------------------
+static constexpr const char* kHighlightOutlineWGSL = R"(
+struct SceneUniforms {
+    viewProjection : mat4x4<f32>, sunDirection : vec4<f32>, highlightColor : vec4<f32>,
+    clipMin : vec4<f32>, clipMax : vec4<f32>, clipActiveMin : vec4<f32>, clipActiveMax : vec4<f32>,
+    lightingMode : u32, _p1 : u32, _p2 : u32, _p3 : u32,
+};
+@group(0) @binding(0) var<uniform> scene : SceneUniforms;
+struct VertIn  { @location(0) pos : vec3<f32>, @location(1) nor : vec3<f32>, @location(2) col : vec3<f32> };
+struct VertOut { @builtin(position) clip : vec4<f32>, @location(0) wpos : vec3<f32> };
+
+@vertex fn vs_main(v : VertIn) -> VertOut {
+    var o : VertOut;
+    o.wpos = v.pos;
+    o.clip = scene.viewProjection * vec4<f32>(v.pos, 1.0);
+    return o;
+}
+
+@fragment fn fs_main(in : VertOut) -> @location(0) vec4<f32> {
+    if (scene.clipActiveMax.x > 0.5 && in.wpos.x > scene.clipMax.x) { discard; }
+    if (scene.clipActiveMin.x > 0.5 && in.wpos.x < scene.clipMin.x) { discard; }
+    if (scene.clipActiveMax.y > 0.5 && in.wpos.y > scene.clipMax.y) { discard; }
+    if (scene.clipActiveMin.y > 0.5 && in.wpos.y < scene.clipMin.y) { discard; }
+    if (scene.clipActiveMax.z > 0.5 && in.wpos.z > scene.clipMax.z) { discard; }
+    if (scene.clipActiveMin.z > 0.5 && in.wpos.z < scene.clipMin.z) { discard; }
+    return vec4<f32>(scene.highlightColor.rgb, 0.8); // High contrast X-ray edges
 }
 )";
 

@@ -23,6 +23,9 @@
 #define ICON_FA_UNDO          "\xef\x80\x9e"
 #define ICON_FA_CUBE          "\xef\x86\xb2"
 #define ICON_FA_VECTOR_SQUARE "\xef\x97\x8b"
+#define ICON_FA_DOOR_OPEN     "\xef\x94\xa2"
+#define ICON_FA_OBJECT_GROUP  "\xef\x89\x87"
+#define ICON_FA_RULER         "\xef\x95\x85"
 
 namespace BimCore {
 
@@ -34,6 +37,64 @@ namespace BimCore {
     }
 
     void UIMainPanel::Render(SelectionState& state, std::shared_ptr<BimDocument> document, float configMaxExplode, bool& triggerFocus) {
+
+        // --- NEW: Safe UI Rendering from 2D coordinates ---
+        if (state.measureToolActive) {
+            ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+            ImU32 colorMeas     = IM_COL32(255, 165, 0, 255);
+            ImU32 colorSnapVert = IM_COL32(0, 255, 255, 255);
+            ImU32 colorSnapEdge = IM_COL32(255, 0, 255, 255);
+            ImU32 colorSnapFace = IM_COL32(255, 255, 0, 255);
+
+            auto drawText = [&](const ImVec2& p1, const ImVec2& p2, const char* text) {
+                if (text[0] == '\0') return;
+                ImVec2 mid((p1.x + p2.x) * 0.5f, (p1.y + p2.y) * 0.5f);
+                ImVec2 tsz = ImGui::CalcTextSize(text);
+                drawList->AddRectFilled(ImVec2(mid.x - 4, mid.y - 4), ImVec2(mid.x + tsz.x + 4, mid.y + tsz.y + 4), IM_COL32(30, 30, 30, 220), 4.0f);
+                drawList->AddText(mid, IM_COL32(255, 255, 255, 255), text);
+            };
+
+            for (const auto& m : state.renderMeasurements) {
+                ImVec2 p1(m.p1[0], m.p1[1]);
+                ImVec2 p2(m.p2[0], m.p2[1]);
+                drawList->AddLine(p1, p2, colorMeas, 3.0f);
+                drawList->AddCircleFilled(p1, 5.0f, colorMeas);
+                drawList->AddCircleFilled(p2, 5.0f, colorMeas);
+                drawText(p1, p2, m.text);
+            }
+
+            if (state.drawActiveLine) {
+                ImVec2 p1(state.renderActiveLine.p1[0], state.renderActiveLine.p1[1]);
+                drawList->AddCircleFilled(p1, 5.0f, colorMeas);
+                if (state.renderActiveLine.text[0] != '\0') {
+                    ImVec2 p2(state.renderActiveLine.p2[0], state.renderActiveLine.p2[1]);
+                    drawList->AddLine(p1, p2, colorMeas, 2.0f);
+                    drawText(p1, p2, state.renderActiveLine.text);
+                }
+            }
+
+            if (state.renderSnap.draw) {
+                ImVec2 sp(state.renderSnap.p[0], state.renderSnap.p[1]);
+                if (state.renderSnap.type == SnapType::Vertex) {
+                    drawList->AddCircle(sp, 10.0f, colorSnapVert, 0, 2.0f);
+                    drawList->AddCircleFilled(sp, 4.0f, colorSnapVert);
+                } else if (state.renderSnap.type == SnapType::Edge) {
+                    ImVec2 e0(state.renderSnap.e0[0], state.renderSnap.e0[1]);
+                    ImVec2 e1(state.renderSnap.e1[0], state.renderSnap.e1[1]);
+                    drawList->AddLine(e0, e1, colorSnapEdge, 4.0f);
+                    drawList->AddCircleFilled(sp, 4.0f, colorSnapEdge);
+                } else if (state.renderSnap.type == SnapType::Face) {
+                    drawList->AddCircleFilled(sp, 4.0f, colorSnapFace);
+                }
+            }
+
+            ImVec2 textPos(ImGui::GetMainViewport()->WorkSize.x * 0.5f, 40.0f);
+            const char* inst = "Measure Tool: Click to start/end. Hold L-ALT to disable snapping. Turn tool off to clear.";
+            ImVec2 tsz = ImGui::CalcTextSize(inst);
+            drawList->AddRectFilled(ImVec2(textPos.x - tsz.x*0.5f - 10, textPos.y - 10), ImVec2(textPos.x + tsz.x*0.5f + 10, textPos.y + tsz.y + 10), IM_COL32(0,0,0,200), 5.0f);
+            drawList->AddText(ImVec2(textPos.x - tsz.x*0.5f, textPos.y), IM_COL32(255,255,255,255), inst);
+        }
+
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         const float statsPanelHeight = 75.0f;
         const float mainPanelHeight = viewport->WorkSize.y - statsPanelHeight;
@@ -55,7 +116,8 @@ namespace BimCore {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save As");
 
         float spacing = ImGui::GetStyle().ItemSpacing.x;
-        float rightButtonGroupWidth = (bigBtnDim * 3.0f) + (spacing * 2.0f);
+
+        float rightButtonGroupWidth = (bigBtnDim * 4.0f) + (spacing * 3.0f);
         float cursorX = ImGui::GetWindowContentRegionMax().x - rightButtonGroupWidth;
 
         if (cursorX > ImGui::GetCursorPosX()) ImGui::SameLine(cursorX);
@@ -64,33 +126,61 @@ namespace BimCore {
         auto drawToolBtn = [&](InteractionTool tool, const char* icon, const char* id) {
             bool isToolActive = (state.activeTool == tool);
             if (isToolActive) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-            if (ImGui::Button(icon, bigBtnSize)) state.activeTool = tool;
+            if (ImGui::Button(icon, bigBtnSize)) {
+                state.activeTool = tool;
+            }
             if (isToolActive) ImGui::PopStyleColor();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", id);
         };
 
             drawToolBtn(InteractionTool::Select, ICON_FA_MOUSE_POINTER, "Select (1)"); ImGui::SameLine();
             drawToolBtn(InteractionTool::Pan, ICON_FA_ARROWS_ALT, "Pan (2)"); ImGui::SameLine();
-            drawToolBtn(InteractionTool::Orbit, ICON_FA_SYNC, "Orbit (3)");
+            drawToolBtn(InteractionTool::Orbit, ICON_FA_SYNC, "Orbit (3)"); ImGui::SameLine();
+
+            // --- FIXED: Draw Measure as an independent Toggle Button ---
+            bool isMeasActive = state.measureToolActive;
+            if (isMeasActive) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            if (ImGui::Button(ICON_FA_RULER, bigBtnSize)) {
+                state.measureToolActive = !state.measureToolActive;
+                if (!state.measureToolActive) {
+                    state.completedMeasurements.clear();
+                    state.isMeasuringActive = false;
+                }
+            }
+            if (isMeasActive) ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Measure Tool (M)");
+
 
             ImGui::Spacing();
-            if (ImGui::Button(ICON_FA_TIMES_CIRCLE, bigBtnSize)) {
-                state.objects.clear();
-                state.selectionChanged = true;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear selected");
-            ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_TIMES_CIRCLE, bigBtnSize)) {
+            state.objects.clear();
+            state.selectionChanged = true;
+            state.completedMeasurements.clear();
+            state.isMeasuringActive = false;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear selected & measurements");
+        ImGui::SameLine();
         if (ImGui::Button(ICON_FA_EYE, bigBtnSize)) { state.hiddenObjects.clear(); state.hiddenStateChanged = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show all");
         ImGui::SameLine();
         if (ImGui::Button(ICON_FA_HISTORY, bigBtnSize)) { ImGui::OpenPopup("Reset Model"); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset");
 
-        cursorX = ImGui::GetWindowContentRegionMax().x - rightButtonGroupWidth;
+        cursorX = ImGui::GetWindowContentRegionMax().x - (bigBtnDim * 5.0f) - (spacing * 4.0f);
         if (cursorX > ImGui::GetCursorPosX()) ImGui::SameLine(cursorX);
         else ImGui::SameLine();
 
-        // --- FIXED: ImGui Push/Pop stack logic ---
+        bool isShowOps = state.showOpeningsAndSpaces;
+        if (isShowOps) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        if (ImGui::Button(ICON_FA_DOOR_OPEN, bigBtnSize)) {
+            state.showOpeningsAndSpaces = !isShowOps;
+            state.groupsBuilt = false;
+        }
+        if (isShowOps) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Openings and Spaces");
+
+        ImGui::SameLine();
+
         bool isStyleSolid = (state.style == 1);
         if (isStyleSolid) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
         if (ImGui::Button(ICON_FA_CUBE, bigBtnSize)) state.style = isStyleSolid ? 0 : 1;
@@ -99,7 +189,14 @@ namespace BimCore {
 
         ImGui::SameLine();
 
-        // --- FIXED: ImGui Push/Pop stack logic ---
+        bool isSelAss = state.selectAssemblies;
+        if (isSelAss) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        if (ImGui::Button(ICON_FA_OBJECT_GROUP, bigBtnSize)) state.selectAssemblies = !isSelAss;
+        if (isSelAss) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Selection Mode (Parts vs Full Assemblies)");
+
+        ImGui::SameLine();
+
         bool isShowBBox = state.showBoundingBox;
         if (isShowBBox) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
         if (ImGui::Button(ICON_FA_VECTOR_SQUARE, bigBtnSize)) state.showBoundingBox = !isShowBBox;
@@ -186,6 +283,7 @@ namespace BimCore {
             state.cachedGroups.clear();
             state.cachedNames.clear();
             for (uint32_t i = 0; i < subMeshes.size(); ++i) {
+                if (!state.showOpeningsAndSpaces && (subMeshes[i].type == "IfcOpeningElement" || subMeshes[i].type == "IfcSpace")) continue;
                 state.cachedGroups[subMeshes[i].type].push_back(i);
             }
             state.groupsBuilt = true;
@@ -203,6 +301,9 @@ namespace BimCore {
                     std::vector<SearchResult> results;
                     for (uint32_t i = 0; i < subMeshes.size(); ++i) {
                         const auto& sub = subMeshes[i];
+
+                        if (!state.showOpeningsAndSpaces && (sub.type == "IfcOpeningElement" || sub.type == "IfcSpace")) continue;
+
                         std::string nameSearchTarget = sub.type;
                         if (state.cachedNames.count(sub.guid)) nameSearchTarget = state.cachedNames[sub.guid];
 
@@ -489,6 +590,11 @@ namespace BimCore {
                 state.hiddenStateChanged = true;
                 state.triggerResetCamera = true;
                 state.selectionChanged = true;
+
+                state.measureToolActive = false;
+                state.completedMeasurements.clear();
+                state.isMeasuringActive = false;
+
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SetItemDefaultFocus();

@@ -47,7 +47,6 @@ namespace BimCore {
         style.Colors[ImGuiCol_WindowBg]         = ImVec4(m_config.ThemeBg[0], m_config.ThemeBg[1], m_config.ThemeBg[2], m_config.ThemeBg[3]);
         style.Colors[ImGuiCol_ChildBg]          = ImVec4(m_config.ThemePanel[0], m_config.ThemePanel[1], m_config.ThemePanel[2], m_config.ThemePanel[3]);
 
-        // --- FIXED: Lightened the Frame background so Checkboxes and Input texts are clearly visible ---
         style.Colors[ImGuiCol_FrameBg]          = ImVec4(m_config.ThemePanel[0]*1.5f, m_config.ThemePanel[1]*1.5f, m_config.ThemePanel[2]*1.5f, 1.0f);
         style.Colors[ImGuiCol_FrameBgHovered]   = ImVec4(m_config.ThemePanel[0]*2.0f, m_config.ThemePanel[1]*2.0f, m_config.ThemePanel[2]*2.0f, 1.0f);
 
@@ -71,7 +70,6 @@ namespace BimCore {
         m_camera = std::make_unique<Camera>((float)m_config.WindowWidth / (float)m_config.WindowHeight);
         m_uiSystem.state.loadState = &m_globalLoadState;
 
-        // --- FIXED: Autoloader no longer requires a strict relative ifstream check ---
         if (!m_config.AutoLoadPath.empty()) {
             std::lock_guard<std::mutex> lock(m_loadMutex);
             m_safePendingLoadPath = m_config.AutoLoadPath;
@@ -184,6 +182,9 @@ namespace BimCore {
                 m_uiSystem.state.cachedNames.clear();
                 m_uiSystem.state.groupsBuilt = false;
                 m_uiSystem.state.hiddenStateChanged = true;
+
+                m_uiSystem.state.completedMeasurements.clear();
+                m_uiSystem.state.isMeasuringActive = false;
             }
         }
     }
@@ -248,6 +249,56 @@ namespace BimCore {
         }
 
         UpdateGeometryOffsets();
+
+        // --- NEW: Safe 2D Math. Only executes, no drawing! ---
+        m_uiSystem.state.renderMeasurements.clear();
+        m_uiSystem.state.drawActiveLine = false;
+        m_uiSystem.state.renderSnap.draw = false;
+
+        if (m_uiSystem.state.measureToolActive) {
+            glm::mat4 vp = m_camera->GetViewProjectionMatrix();
+            float w = (float)m_window->GetWidth();
+            float h = (float)m_window->GetHeight();
+
+            auto WorldToScreen = [&](const glm::vec3& pos, float* out) -> bool {
+                glm::vec4 clip = vp * glm::vec4(pos, 1.0f);
+                if (clip.w <= 0.001f) return false;
+                glm::vec3 ndc = glm::vec3(clip) / clip.w;
+                out[0] = (ndc.x + 1.0f) * 0.5f * w;
+                out[1] = (1.0f - ndc.y) * 0.5f * h;
+                return true;
+            };
+
+            for (const auto& m : m_uiSystem.state.completedMeasurements) {
+                Measurement2D m2d;
+                if (WorldToScreen(m.p1, m2d.p1) && WorldToScreen(m.p2, m2d.p2)) {
+                    snprintf(m2d.text, sizeof(m2d.text), "%.3f m", glm::length(m.p2 - m.p1));
+                    m_uiSystem.state.renderMeasurements.push_back(m2d);
+                }
+            }
+
+            if (m_uiSystem.state.isMeasuringActive) {
+                if (WorldToScreen(m_uiSystem.state.measureStartPoint, m_uiSystem.state.renderActiveLine.p1)) {
+                    m_uiSystem.state.drawActiveLine = true;
+                    if (m_uiSystem.state.isHoveringGeometry && WorldToScreen(m_uiSystem.state.currentSnapPoint, m_uiSystem.state.renderActiveLine.p2)) {
+                        snprintf(m_uiSystem.state.renderActiveLine.text, sizeof(m_uiSystem.state.renderActiveLine.text), "%.3f m", glm::length(m_uiSystem.state.currentSnapPoint - m_uiSystem.state.measureStartPoint));
+                    } else {
+                        m_uiSystem.state.renderActiveLine.text[0] = '\0';
+                    }
+                }
+            }
+
+            if (m_uiSystem.state.isHoveringGeometry) {
+                m_uiSystem.state.renderSnap.type = m_uiSystem.state.currentSnapType;
+                if (WorldToScreen(m_uiSystem.state.currentSnapPoint, m_uiSystem.state.renderSnap.p)) {
+                    m_uiSystem.state.renderSnap.draw = true;
+                    if (m_uiSystem.state.currentSnapType == SnapType::Edge) {
+                        WorldToScreen(m_uiSystem.state.currentSnapEdgeV0, m_uiSystem.state.renderSnap.e0);
+                        WorldToScreen(m_uiSystem.state.currentSnapEdgeV1, m_uiSystem.state.renderSnap.e1);
+                    }
+                }
+            }
+        }
     }
 
     void EditorApp::UpdateGeometryOffsets() {
@@ -326,6 +377,8 @@ namespace BimCore {
         std::vector<uint32_t> solid, trans;
         for (const auto& sub : m_document->GetGeometry().subMeshes) {
             if (m_uiSystem.state.hiddenObjects.count(sub.guid)) continue;
+            if (!m_uiSystem.state.showOpeningsAndSpaces && (sub.type == "IfcOpeningElement" || sub.type == "IfcSpace")) continue;
+
             auto& target = sub.isTransparent ? trans : solid;
             for (uint32_t i=0; i<sub.indexCount; ++i) target.push_back(m_document->GetGeometry().indices[sub.startIndex + i]);
         }
@@ -359,8 +412,6 @@ namespace BimCore {
         scene.lightingMode = m_currentLightMode;
         scene.highlightColor = m_uiSystem.state.color;
 
-        // --- FIXED: The shader ALWAYS clips the math based on the sliders ---
-        // The checkboxes in the UI only control whether the colored glass plane is drawn.
         scene.clipActiveMin = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
         scene.clipActiveMax = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
 
