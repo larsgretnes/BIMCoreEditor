@@ -7,6 +7,7 @@
 #include <string>
 #include <mutex>
 #include <vector>
+#include <map>
 
 #include "Core.h"
 #include "EngineConfig.h"
@@ -36,8 +37,9 @@ namespace BimCore {
         void FocusCameraOnSelection();
         void Render();
 
-        // --- NEW: Master Mesh Builder ---
         void RebuildMasterMesh();
+        // --- NEW: Batch rebuilding helper to stop CPU thrashing ---
+        void RebuildRenderBatches(); 
 
     private:
         // --- Core Engine Systems ---
@@ -58,6 +60,13 @@ namespace BimCore {
         std::vector<Vertex>                 m_masterVertices;
         std::vector<uint32_t>               m_masterIndices;
         bool                                m_triggerRebuild = false;
+
+        // --- NEW: Caching for Performance ---
+        float                               m_masterMinBounds[3] = { 1e9f,  1e9f,  1e9f  };
+        float                               m_masterMaxBounds[3] = {-1e9f, -1e9f, -1e9f  };
+        std::map<int, std::vector<uint32_t>> m_cachedSolidBatches;
+        std::map<int, std::vector<uint32_t>> m_cachedTransBatches;
+        bool                                m_triggerBatchRebuild = true;
 
         // --- File Tracking ---
         std::string                         m_currentFilename;

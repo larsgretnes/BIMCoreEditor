@@ -46,7 +46,7 @@ namespace BimCore {
         std::vector<Vertex>        vertices;
         std::vector<uint32_t>      indices;
         std::vector<RenderSubMesh> subMeshes;
-        std::vector<TextureData>   textures;
+        std::vector<TextureData>   textures; 
 
         std::vector<Vertex>        originalVertices;
 
@@ -80,32 +80,35 @@ namespace BimCore {
         bool        HasModifiedProperties(const std::string& guid) const;
 
         bool CommitASTChanges();
-
+        
         void ApplyTransform(const glm::mat4& matrix);
 
         void SetHierarchy(const std::unordered_map<std::string, std::string>& childToParent,
                           const std::unordered_map<std::string, std::vector<std::string>>& parentToChildren) {
             m_childToParent = childToParent;
             m_parentToChildren = parentToChildren;
-                          }
+        }
 
-                          std::string GetParent(const std::string& guid) const {
-                              auto it = m_childToParent.find(guid);
-                              return it != m_childToParent.end() ? it->second : "";
-                          }
+        std::string GetParent(const std::string& guid) const {
+            auto it = m_childToParent.find(guid);
+            return it != m_childToParent.end() ? it->second : "";
+        }
 
-                          std::vector<std::string> GetChildren(const std::string& guid) const {
-                              auto it = m_parentToChildren.find(guid);
-                              return it != m_parentToChildren.end() ? it->second : std::vector<std::string>();
-                          }
+        std::vector<std::string> GetChildren(const std::string& guid) const {
+            auto it = m_parentToChildren.find(guid);
+            return it != m_parentToChildren.end() ? it->second : std::vector<std::string>();
+        }
 
-                          bool IsAssembly(const std::string& guid) const {
-                              return m_parentToChildren.find(guid) != m_parentToChildren.end();
-                          }
+        bool IsAssembly(const std::string& guid) const {
+            return m_parentToChildren.find(guid) != m_parentToChildren.end();
+        }
 
-                          // --- NEW: Toggle the entire document's visibility instantly ---
-                          bool IsHidden() const { return m_isHidden; }
-                          void SetHidden(bool hidden) { m_isHidden = hidden; }
+        bool IsHidden() const { return m_isHidden; }
+        void SetHidden(bool hidden) { m_isHidden = hidden; }
+
+        // --- NEW: UI Group Caching ---
+        const std::map<std::string, std::vector<uint32_t>>& GetUIGroups() const { return m_uiGroups; }
+        void BuildUIGroups();
 
     private:
         void LoadPropertiesFromAST(const std::string& guid);
@@ -117,6 +120,7 @@ namespace BimCore {
         std::unordered_map<std::string, std::string>              m_childToParent;
         std::unordered_map<std::string, std::vector<std::string>> m_parentToChildren;
 
+        std::map<std::string, std::vector<uint32_t>>              m_uiGroups;
         bool m_isHidden = false;
     };
 

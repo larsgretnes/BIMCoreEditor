@@ -15,6 +15,15 @@ namespace BimCore {
 
     BimDocument::BimDocument(std::shared_ptr<IfcParse::IfcFile> database, RenderMesh geometry, const std::string& path)
     : m_database(database), m_geometry(geometry), m_filePath(path) {
+        // --- NEW: Build the groups immediately upon load to stop UI heap churn ---
+        BuildUIGroups();
+    }
+
+    void BimDocument::BuildUIGroups() {
+        m_uiGroups.clear();
+        for (uint32_t i = 0; i < m_geometry.subMeshes.size(); ++i) {
+            m_uiGroups[m_geometry.subMeshes[i].type].push_back(i);
+        }
     }
 
     RenderMesh& BimDocument::GetGeometry() { return m_geometry; }
@@ -212,13 +221,14 @@ namespace BimCore {
             if (obj) m_database->removeEntity(obj);
         } catch (...) {}
 
-        // ENHANCEMENT: Also erase it from the RenderMesh entirely!
-        // This makes it permanently disappear from the UI/Viewport without needing a full reload.
         m_geometry.subMeshes.erase(
             std::remove_if(m_geometry.subMeshes.begin(), m_geometry.subMeshes.end(),
                            [&](const RenderSubMesh& sub) { return sub.guid == guid; }),
                                    m_geometry.subMeshes.end()
         );
+
+        // --- NEW: Rebuild the UI groups since the indices just shifted due to deletion ---
+        BuildUIGroups();
 
         return true;
     }
@@ -374,9 +384,6 @@ namespace BimCore {
         }
         for (auto* obj : entitiesToDelete) { try { m_database->removeEntity(obj); } catch(...) {} }
 
-        // =====================================================================
-        // ENHANCEMENT: Establish the New Baseline directly in the Document Ledger!
-        // =====================================================================
         for (auto& [guid, props] : m_propertyCache) {
             for (auto it = props.begin(); it != props.end(); ) {
                 if (it->second.isDeleted) {

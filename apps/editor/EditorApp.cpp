@@ -74,6 +74,14 @@ namespace BimCore {
         style.GrabRounding = 4.0f;
 
         m_camera = std::make_unique<Camera>((float)m_config.WindowWidth / (float)m_config.WindowHeight);
+        
+        m_camera->SetZoomFlyMultiplier(m_config.ZoomFlyMultiplier);
+        m_camera->SetFocusSpeed(m_config.CameraFocusSpeed);
+        m_camera->SetFocusPadding(m_config.CameraFocusPadding);
+        m_camera->SetMinOrbitDistance(m_config.CameraMinOrbitDistance);
+        m_camera->SetPivotJumpThreshold(m_config.CameraPivotJumpThreshold);
+        m_camera->SetPanReferenceHeight(m_config.CameraPanReferenceHeight);
+
         m_uiSystem.state.loadState = &m_globalLoadState;
 
         if (!m_config.AutoLoadPath.empty() && std::filesystem::exists(m_config.AutoLoadPath)) {
@@ -128,10 +136,41 @@ namespace BimCore {
             m_uiSystem.state.clipXMin = minB[0] - 0.1f; m_uiSystem.state.clipXMax = maxB[0] + 0.1f;
             m_uiSystem.state.clipYMin = minB[1] - 0.1f; m_uiSystem.state.clipYMax = maxB[1] + 0.1f;
             m_uiSystem.state.clipZMin = minB[2] - 0.1f; m_uiSystem.state.clipZMax = maxB[2] + 0.1f;
+            for (int j=0; j<3; ++j) {
+                m_masterMinBounds[j] = minB[j];
+                m_masterMaxBounds[j] = maxB[j];
+            }
         }
 
         m_uiSystem.state.updateGeometry = true; 
         m_triggerRebuild = false;
+        m_triggerBatchRebuild = true;
+    }
+
+    // --- NEW: Cache GPU batches so we only rebuild indices when visibility changes ---
+    void EditorApp::RebuildRenderBatches() {
+        m_cachedSolidBatches.clear();
+        m_cachedTransBatches.clear();
+
+        for (auto& doc : m_documents) {
+            if (doc->IsHidden()) continue;
+
+            for (const auto& sub : doc->GetGeometry().subMeshes) {
+                if (m_uiSystem.state.hiddenObjects.count(sub.guid)) continue;
+                if (!m_uiSystem.state.showOpeningsAndSpaces && (sub.type == "IfcOpeningElement" || sub.type == "IfcSpace")) continue;
+
+                auto& targetMap = sub.isTransparent ? m_cachedTransBatches : m_cachedSolidBatches;
+                auto& targetVec = targetMap[sub.globalTextureIndex];
+                
+                targetVec.reserve(targetVec.size() + sub.indexCount);
+                for (uint32_t i=0; i<sub.indexCount; ++i) {
+                    targetVec.push_back(m_masterIndices[sub.globalStartIndex + i]);
+                }
+            }
+        }
+        
+        m_graphics->UpdateActiveBatches(m_cachedSolidBatches, m_cachedTransBatches);
+        m_triggerBatchRebuild = false;
     }
 
     void EditorApp::Run() {
@@ -148,6 +187,12 @@ namespace BimCore {
             }
 
             HandleAsyncTasks();
+
+            // --- FIXED: Safely intercept visibility toggles to trigger batch rebuilds ---
+            if (m_uiSystem.state.hiddenStateChanged) {
+                m_triggerBatchRebuild = true;
+                m_uiSystem.state.hiddenStateChanged = false;
+            }
 
             if (m_uiSystem.state.triggerResetCamera && !m_documents.empty()) {
                 m_uiSystem.state.triggerResetCamera = false;
@@ -239,6 +284,7 @@ namespace BimCore {
             HandleSaveTask();
             
             if (m_triggerRebuild) RebuildMasterMesh();
+            if (m_triggerBatchRebuild) RebuildRenderBatches();
             
             Update(deltaTime, triggerFocus);
             Render();
@@ -296,9 +342,7 @@ namespace BimCore {
                 m_uiSystem.state.objects.clear();
                 m_uiSystem.state.searchResults.clear();
                 m_uiSystem.state.isSearchActive = false;
-                m_uiSystem.state.cachedGroups.clear();
                 m_uiSystem.state.cachedNames.clear();
-                m_uiSystem.state.groupsBuilt = false;
                 m_uiSystem.state.hiddenStateChanged = true;
 
                 m_uiSystem.state.completedMeasurements.clear();
@@ -334,7 +378,6 @@ namespace BimCore {
             m_uiSystem.state.deletedObjects.clear();
             m_uiSystem.state.objects.clear();
             m_uiSystem.state.cachedNames.clear();
-            m_uiSystem.state.groupsBuilt = false;
 
             size_t pos = savePath.find_last_of("/\\");
             m_currentFilename = (pos != std::string::npos) ? savePath.substr(pos + 1) : savePath;
@@ -417,7 +460,6 @@ namespace BimCore {
     void EditorApp::UpdateGeometryOffsets() {
         if (!m_uiSystem.state.updateGeometry) return;
 
-        // 1. Get the LIVE bounds of the currently displayed geometry BEFORE we rebuild it
         float oldMin[3] = { kFloatMax, kFloatMax, kFloatMax };
         float oldMax[3] = { kFloatMin, kFloatMin, kFloatMin };
         
@@ -446,7 +488,6 @@ namespace BimCore {
             }
         }
 
-        // Save exactly where the clipping sliders are right now as a percentage [0.0 to 1.0]
         float pctXMin = std::clamp((m_uiSystem.state.clipXMin - oldMin[0]) / (oldMax[0] - oldMin[0]), 0.0f, 1.0f);
         float pctXMax = std::clamp((m_uiSystem.state.clipXMax - oldMin[0]) / (oldMax[0] - oldMin[0]), 0.0f, 1.0f);
         float pctYMin = std::clamp((m_uiSystem.state.clipYMin - oldMin[1]) / (oldMax[1] - oldMin[1]), 0.0f, 1.0f);
@@ -454,7 +495,6 @@ namespace BimCore {
         float pctZMin = std::clamp((m_uiSystem.state.clipZMin - oldMin[2]) / (oldMax[2] - oldMin[2]), 0.0f, 1.0f);
         float pctZMax = std::clamp((m_uiSystem.state.clipZMax - oldMin[2]) / (oldMax[2] - oldMin[2]), 0.0f, 1.0f);
 
-        // 2. Get original UNEXPLODED center to calculate explosion vectors
         float origMin[3] = { kFloatMax, kFloatMax, kFloatMax };
         float origMax[3] = { kFloatMin, kFloatMin, kFloatMin };
         for (auto& doc : m_documents) {
@@ -466,7 +506,6 @@ namespace BimCore {
         }
         glm::vec3 globalCenter((origMin[0]+origMax[0])*0.5f, (origMin[1]+origMax[1])*0.5f, (origMin[2]+origMax[2])*0.5f);
 
-        // 3. Explode the geometry
         m_masterVertices.clear();
         float newMin[3] = { kFloatMax, kFloatMax, kFloatMax };
         float newMax[3] = { kFloatMin, kFloatMin, kFloatMin };
@@ -503,16 +542,17 @@ namespace BimCore {
             m_masterVertices.insert(m_masterVertices.end(), geom.vertices.begin(), geom.vertices.end());
         }
 
-        // 4. Pad the newly exploded bounds
+        // --- FIXED: Safely cache the physical bounds of the Live Master Mesh ---
         for (int j=0; j<3; ++j) {
             newMin[j] -= 0.1f; 
             newMax[j] += 0.1f;
             if (newMax[j] - newMin[j] < 0.0001f) {
                 newMin[j] -= 0.1f; newMax[j] += 0.1f;
             }
+            m_masterMinBounds[j] = newMin[j];
+            m_masterMaxBounds[j] = newMax[j];
         }
 
-        // 5. Restore the clipping planes mapping them to the new exploded bounds
         m_uiSystem.state.clipXMin = newMin[0] + pctXMin * (newMax[0] - newMin[0]);
         m_uiSystem.state.clipXMax = newMin[0] + pctXMax * (newMax[0] - newMin[0]);
         m_uiSystem.state.clipYMin = newMin[1] + pctYMin * (newMax[1] - newMin[1]);
@@ -536,26 +576,6 @@ namespace BimCore {
             return;
         }
 
-        std::map<int, std::vector<uint32_t>> solidBatches, transBatches;
-        
-        for (auto& doc : m_documents) {
-            if (doc->IsHidden()) continue;
-
-            for (const auto& sub : doc->GetGeometry().subMeshes) {
-                if (m_uiSystem.state.hiddenObjects.count(sub.guid)) continue;
-                if (!m_uiSystem.state.showOpeningsAndSpaces && (sub.type == "IfcOpeningElement" || sub.type == "IfcSpace")) continue;
-
-                auto& targetMap = sub.isTransparent ? transBatches : solidBatches;
-                auto& targetVec = targetMap[sub.globalTextureIndex];
-                
-                targetVec.reserve(targetVec.size() + sub.indexCount);
-                for (uint32_t i=0; i<sub.indexCount; ++i) {
-                    targetVec.push_back(m_masterIndices[sub.globalStartIndex + i]);
-                }
-            }
-        }
-        m_graphics->UpdateActiveBatches(solidBatches, transBatches);
-
         if (m_uiSystem.state.showBoundingBox && !m_uiSystem.state.objects.empty()) {
             auto b = ComputeSelectionBounds(m_uiSystem.state.objects, m_masterVertices, m_masterIndices);
             if (b.valid) m_graphics->SetBoundingBox(true, b.min, b.max);
@@ -571,24 +591,13 @@ namespace BimCore {
             m_graphics->SetHighlight(false, {}, 0);
         }
 
-        float minB[3] = { kFloatMax, kFloatMax, kFloatMax };
-        float maxB[3] = { kFloatMin, kFloatMin, kFloatMin };
-        if (!m_masterVertices.empty()) {
-            for (const auto& v : m_masterVertices) {
-                if (v.position[0] < minB[0]) minB[0] = v.position[0];
-                if (v.position[0] > maxB[0]) maxB[0] = v.position[0];
-                if (v.position[1] < minB[1]) minB[1] = v.position[1];
-                if (v.position[1] > maxB[1]) maxB[1] = v.position[1];
-                if (v.position[2] < minB[2]) minB[2] = v.position[2];
-                if (v.position[2] > maxB[2]) maxB[2] = v.position[2];
-            }
-        }
-
+        // --- FIXED: Read directly from the cached Master Bounds arrays! ---
         m_graphics->SetClippingPlanes(
             m_uiSystem.state.showPlaneXMin, m_uiSystem.state.clipXMin, m_uiSystem.state.showPlaneXMax, m_uiSystem.state.clipXMax, m_uiSystem.state.planeColorX,
             m_uiSystem.state.showPlaneYMin, m_uiSystem.state.clipYMin, m_uiSystem.state.showPlaneYMax, m_uiSystem.state.clipYMax, m_uiSystem.state.planeColorY,
             m_uiSystem.state.showPlaneZMin, m_uiSystem.state.clipZMin, m_uiSystem.state.showPlaneZMax, m_uiSystem.state.clipZMax, m_uiSystem.state.planeColorZ,
-            glm::vec3(minB[0], minB[1], minB[2]), glm::vec3(maxB[0], maxB[1], maxB[2])
+            glm::vec3(m_masterMinBounds[0], m_masterMinBounds[1], m_masterMinBounds[2]), 
+            glm::vec3(m_masterMaxBounds[0], m_masterMaxBounds[1], m_masterMaxBounds[2])
         );
 
         SceneUniforms scene{};

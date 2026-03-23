@@ -14,8 +14,8 @@
 
 #define ICON_FA_FOLDER_OPEN   "\xef\x81\xbc"
 #define ICON_FA_SAVE          "\xef\x83\x87"
-#define ICON_FA_FILE_IMPORT   "\xef\x95\xaf"
-#define ICON_FA_FILE_EXPORT   "\xef\x95\xae"
+#define ICON_FA_FILE_IMPORT   "\xef\x95\xaf" 
+#define ICON_FA_FILE_EXPORT   "\xef\x95\xae" 
 #define ICON_FA_MOUSE_POINTER "\xef\x89\x85"
 #define ICON_FA_ARROWS_ALT    "\xef\x82\xb2"
 #define ICON_FA_SYNC          "\xef\x80\xa1"
@@ -157,23 +157,23 @@ namespace BimCore {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", id);
         };
 
-            drawToolBtn(InteractionTool::Select, ICON_FA_MOUSE_POINTER, "Select (1)"); ImGui::SameLine();
-            drawToolBtn(InteractionTool::Pan, ICON_FA_ARROWS_ALT, "Pan (2)"); ImGui::SameLine();
-            drawToolBtn(InteractionTool::Orbit, ICON_FA_SYNC, "Orbit (3)"); ImGui::SameLine();
+        drawToolBtn(InteractionTool::Select, ICON_FA_MOUSE_POINTER, "Select (1)"); ImGui::SameLine();
+        drawToolBtn(InteractionTool::Pan, ICON_FA_ARROWS_ALT, "Pan (2)"); ImGui::SameLine();
+        drawToolBtn(InteractionTool::Orbit, ICON_FA_SYNC, "Orbit (3)"); ImGui::SameLine();
 
-            bool isMeasActive = state.measureToolActive;
-            if (isMeasActive) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-            if (ImGui::Button(ICON_FA_RULER, bigBtnSize)) {
-                state.measureToolActive = !state.measureToolActive;
-                if (!state.measureToolActive) {
-                    state.completedMeasurements.clear();
-                    state.isMeasuringActive = false;
-                }
+        bool isMeasActive = state.measureToolActive;
+        if (isMeasActive) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        if (ImGui::Button(ICON_FA_RULER, bigBtnSize)) {
+            state.measureToolActive = !state.measureToolActive;
+            if (!state.measureToolActive) {
+                state.completedMeasurements.clear();
+                state.isMeasuringActive = false;
             }
-            if (isMeasActive) ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Measure Tool (M)");
+        }
+        if (isMeasActive) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Measure Tool (M)");
 
-            ImGui::Spacing();
+        ImGui::Spacing();
         if (ImGui::Button(ICON_FA_TIMES_CIRCLE, bigBtnSize)) {
             state.objects.clear();
             state.selectionChanged = true;
@@ -182,10 +182,10 @@ namespace BimCore {
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear selected & measurements");
         ImGui::SameLine();
-        if (ImGui::Button(ICON_FA_EYE, bigBtnSize)) {
-            state.hiddenObjects.clear();
-            for(auto& d : documents) d->SetHidden(false); // Make sure parent models are shown too
-            state.hiddenStateChanged = true;
+        if (ImGui::Button(ICON_FA_EYE, bigBtnSize)) { 
+            state.hiddenObjects.clear(); 
+            for(auto& d : documents) d->SetHidden(false); 
+            state.hiddenStateChanged = true; 
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show all");
         ImGui::SameLine();
@@ -200,7 +200,8 @@ namespace BimCore {
         if (isShowOps) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
         if (ImGui::Button(ICON_FA_DOOR_OPEN, bigBtnSize)) {
             state.showOpeningsAndSpaces = !isShowOps;
-            state.groupsBuilt = false;
+            // --- FIXED: Route directly to hiddenStateChanged to force batch rebuild ---
+            state.hiddenStateChanged = true; 
         }
         if (isShowOps) ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Openings and Spaces");
@@ -280,7 +281,7 @@ namespace BimCore {
                     if (geom.minBounds[2] < bMinZ) bMinZ = geom.minBounds[2];
                     if (geom.maxBounds[2] > bMaxZ) bMaxZ = geom.maxBounds[2];
                 }
-
+                
                 float expand = 0.0f;
                 if (state.explodeFactor > 0.01f) {
                     float extX = bMaxX - bMinX;
@@ -468,24 +469,22 @@ namespace BimCore {
                 auto& doc = *it;
                 std::string filename = std::filesystem::path(doc->GetFilePath()).filename().string();
 
-                // --- FIXED: Display (Hidden) next to the filename ---
                 if (doc->IsHidden()) filename += " (Hidden)";
 
                 ImGui::PushID(doc.get());
                 bool isFileNodeOpen = ImGui::TreeNodeEx("FileNode", ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_DefaultOpen, "%s", filename.c_str());
 
                 if (ImGui::BeginPopupContextItem()) {
-                    // --- FIXED: Context menu options to Hide/Show model ---
                     if (doc->IsHidden()) {
-                        if (ImGui::MenuItem("Show model")) doc->SetHidden(false);
+                        if (ImGui::MenuItem("Show model")) { doc->SetHidden(false); state.hiddenStateChanged = true; }
                     } else {
                         if (ImGui::MenuItem("Hide model")) {
                             doc->SetHidden(true);
-                            // Clear selections for this hidden model
                             state.objects.erase(std::remove_if(state.objects.begin(), state.objects.end(),
                                                                [&](const SelectedObject& o) {
                                                                    for (const auto& sub : doc->GetGeometry().subMeshes) { if (o.guid == sub.guid) return true; } return false;
                                                                }), state.objects.end());
+                            state.hiddenStateChanged = true;
                         }
                     }
                     ImGui::Separator();
@@ -507,7 +506,6 @@ namespace BimCore {
                     }
                     ImGui::Separator();
 
-                    // --- FIXED: Rename to "Close model" ---
                     if (ImGui::MenuItem("Close model")) {
                         it = documents.erase(it);
                         state.objects.clear();
@@ -524,14 +522,13 @@ namespace BimCore {
                     if (doc->IsHidden()) {
                         ImGui::TextDisabled("Model is currently hidden.");
                     } else {
-                        std::map<std::string, std::vector<uint32_t>> docGroups;
+                        // --- FIXED: Use the cached UI Groups directly! ---
+                        const auto& docGroups = doc->GetUIGroups();
                         const auto& subMeshes = doc->GetGeometry().subMeshes;
-                        for (uint32_t i = 0; i < subMeshes.size(); ++i) {
-                            if (!state.showOpeningsAndSpaces && (subMeshes[i].type == "IfcOpeningElement" || subMeshes[i].type == "IfcSpace")) continue;
-                            docGroups[subMeshes[i].type].push_back(i);
-                        }
 
                         for (const auto& [type, indices] : docGroups) {
+                            if (!state.showOpeningsAndSpaces && (type == "IfcOpeningElement" || type == "IfcSpace")) continue;
+
                             bool groupHasHidden = false, groupHasDeleted = false, groupHasEdited = false, groupHasSelected = false;
                             for (uint32_t idx : indices) {
                                 const auto& sub = subMeshes[idx];
@@ -660,8 +657,8 @@ namespace BimCore {
                 const auto& targetSub = subMeshes[targetMeshIdx];
                 bool isSel = std::any_of(state.objects.begin(), state.objects.end(), [&](const SelectedObject& o) { return o.guid == targetSub.guid; });
                 if (!isSel) {
-                    SelectedObject so; so.guid = targetSub.guid; so.type = targetSub.type;
-                    so.startIndex = targetSub.globalStartIndex; so.indexCount = targetSub.indexCount;
+                    SelectedObject so; so.guid = targetSub.guid; so.type = targetSub.type; 
+                    so.startIndex = targetSub.globalStartIndex; so.indexCount = targetSub.indexCount; 
                     so.properties = document->GetElementProperties(targetSub.guid);
                     state.objects.push_back(so);
                 }
@@ -671,8 +668,8 @@ namespace BimCore {
             bool isSelected = std::any_of(state.objects.begin(), state.objects.end(), [&](const SelectedObject& o) { return o.guid == subMeshes[meshIdx].guid; });
             if (!isSelected) {
                 const auto& targetSub = subMeshes[meshIdx];
-                SelectedObject so; so.guid = targetSub.guid; so.type = targetSub.type;
-                so.startIndex = targetSub.globalStartIndex; so.indexCount = targetSub.indexCount;
+                SelectedObject so; so.guid = targetSub.guid; so.type = targetSub.type; 
+                so.startIndex = targetSub.globalStartIndex; so.indexCount = targetSub.indexCount; 
                 so.properties = document->GetElementProperties(targetSub.guid);
                 state.objects.push_back(so);
             } else if (io.KeyCtrl) {
@@ -691,12 +688,12 @@ namespace BimCore {
 
             if (ImGui::Button("OK", ImVec2(120, 0))) {
                 for (auto& doc : documents) {
-                    doc->SetHidden(false); // --- FIXED: Show all parent models on reset ---
+                    doc->SetHidden(false); 
                     for (auto& [guid, props] : state.originalProperties) {
                         for (auto& [k, v] : props) doc->UpdateElementProperty(guid, k, v);
                     }
                 }
-
+                
                 triggerRebuild = true;
 
                 state.explodeFactor = 0.0f;
