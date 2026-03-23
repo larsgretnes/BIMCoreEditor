@@ -23,10 +23,18 @@ namespace BimCore {
         void ProcessPan(float deltaX, float deltaY);
         void ProcessOrbit(float deltaX, float deltaY);
         void ProcessZoom(float zoomDelta);
+        
         void SetZoomSpeed(float speed) { m_zoomSpeed = speed; }
-
         void SetMovementSpeed(float speed) { m_movementSpeed = speed; }
         void SetMouseSensitivity(float sens) { m_mouseSensitivity = sens; }
+
+        // --- NEW: Setters for math config variables ---
+        void SetZoomFlyMultiplier(float mult) { m_zoomFlyMultiplier = mult; }
+        void SetFocusSpeed(float speed) { m_focusSpeed = speed; }
+        void SetFocusPadding(float pad) { m_focusPadding = pad; }
+        void SetMinOrbitDistance(float dist) { m_minOrbitDistance = dist; }
+        void SetPivotJumpThreshold(float dist) { m_pivotJumpThreshold = dist; }
+        void SetPanReferenceHeight(float height) { m_panReferenceHeight = height; }
 
         glm::vec3 GetPosition() const { return m_position; }
 
@@ -38,14 +46,11 @@ namespace BimCore {
         void UpdateCameraVectors();
         void UpdateMatrices();
 
-        // --- FIXED: Z-Up Starting Positions ---
-        // Look down the Y axis (green), slightly above the Z (blue) ground plane
         glm::vec3 m_position{0.0f, -20.0f, 5.0f};
         glm::vec3 m_front{0.0f, 1.0f, 0.0f};
         glm::vec3 m_up{0.0f, 0.0f, 1.0f};
         glm::vec3 m_right{1.0f, 0.0f, 0.0f};
 
-        // Euler Angles for Z-Up: Yaw 90 faces +Y. Pitch -15 looks slightly down.
         float m_yaw = 90.0f;
         float m_pitch = -15.0f;
 
@@ -68,6 +73,14 @@ namespace BimCore {
         float m_movementSpeed = 5.0f;
         float m_mouseSensitivity = 0.1f;
         float m_zoomSpeed = 1.0f;
+
+        // --- NEW: Internal state for math variables ---
+        float m_zoomFlyMultiplier = 1.0f;
+        float m_focusSpeed = 2.5f;
+        float m_focusPadding = 1.2f;
+        float m_minOrbitDistance = 0.1f;
+        float m_pivotJumpThreshold = 0.5f;
+        float m_panReferenceHeight = 1080.0f;
 
         float m_aspect;
         float m_fov;
