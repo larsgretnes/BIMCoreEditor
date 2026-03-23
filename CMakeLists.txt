@@ -98,15 +98,23 @@ endif()
 # 3. FETCH VENDOR DEPENDENCIES
 # ==============================================================================
 include(FetchContent)
+
+set(TINYGLTF_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(TINYGLTF_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+
 FetchContent_Declare(webgpu GIT_REPOSITORY https://github.com/eliemichel/WebGPU-distribution.git GIT_TAG main)
 FetchContent_Declare(glfw3webgpu GIT_REPOSITORY https://github.com/eliemichel/glfw3webgpu.git GIT_TAG main)
 FetchContent_Declare(imgui_fetch GIT_REPOSITORY https://github.com/ocornut/imgui.git GIT_TAG master)
 
-# --- NEW: Added Nlohmann JSON and TinyGLTF ---
 FetchContent_Declare(nlohmann_json GIT_REPOSITORY https://github.com/nlohmann/json.git GIT_TAG v3.11.3)
 FetchContent_Declare(tinygltf GIT_REPOSITORY https://github.com/syoyo/tinygltf.git GIT_TAG v2.8.3)
+FetchContent_Declare(mini GIT_REPOSITORY https://github.com/pulzed/mINI.git GIT_TAG 0.9.14)
 
-FetchContent_MakeAvailable(webgpu glfw3webgpu imgui_fetch nlohmann_json tinygltf)
+FetchContent_MakeAvailable(webgpu glfw3webgpu imgui_fetch nlohmann_json tinygltf mini)
+
+if(TARGET tinygltf AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(tinygltf PRIVATE -w)
+endif()
 
 # ==============================================================================
 # 4. IMGUI MANUAL TARGET SETUP
@@ -125,55 +133,54 @@ target_compile_definitions(imgui PUBLIC IMGUI_IMPL_WEBGPU_BACKEND_WGPU)
 target_link_libraries(imgui PUBLIC webgpu glfw)
 
 # ==============================================================================
-# 5. BIMCORE SDK LIBRARY
+# 5. THE EDITOR APPLICATION (Merged SDK & App)
 # ==============================================================================
-set(SDK_SOURCES
-    sdk/src/graphics/GraphicsContext.cpp
-    sdk/src/platform/Window.cpp
-    sdk/src/scene/Camera.cpp
-    sdk/src/scene/Raycaster.cpp
-    sdk/src/scene/BimDocument.cpp
-    sdk/src/scene/IfcLoader.cpp
-    sdk/src/scene/IfcExporter.cpp
-    sdk/src/scene/CsvImporter.cpp
-    sdk/src/scene/FormatModules.cpp
+set(APP_SOURCES
+    src/core/main.cpp
+    src/core/EditorApp.cpp
+    src/core/EngineConfig.cpp
+    src/ui/AppUI.cpp
+    src/ui/UIMainPanel.cpp
+    src/ui/UIPropertiesPanel.cpp
+    src/ui/UIStatusOverlay.cpp
+    src/input/InputController.cpp
+    src/graphics/GraphicsContext.cpp
+    src/graphics/Camera.cpp
+    src/scene/SceneModel.cpp
+    src/scene/Raycaster.cpp
+    src/io/IfcLoader.cpp
+    src/io/IfcExporter.cpp
+    src/io/GltfImporter.cpp
+    src/io/GltfExporter.cpp
+    src/io/BcfImporter.cpp
+    src/io/CsvImporter.cpp
+    src/platform/Window.cpp
 )
-add_library(BimCore_SDK STATIC ${SDK_SOURCES})
 
-# --- FIXED: Strict warnings for OUR code ---
-target_include_directories(BimCore_SDK PUBLIC sdk/src "${GLM_INCLUDE_DIR}")
+add_executable(BIMCoreEditor ${APP_SOURCES})
 
-# --- FIXED: Mute warnings for 3rd-party code using the SYSTEM flag ---
-target_include_directories(BimCore_SDK SYSTEM PUBLIC "${tinygltf_SOURCE_DIR}")
+# Target Include Directories
+target_include_directories(BIMCoreEditor PRIVATE 
+    src 
+    "${GLM_INCLUDE_DIR}" 
+    "${mini_SOURCE_DIR}/src"
+)
+# Add third-party headers as SYSTEM to suppress their warnings
+target_include_directories(BIMCoreEditor SYSTEM PRIVATE "${tinygltf_SOURCE_DIR}")
 
-# Linked nlohmann_json and tinygltf to the SDK
-target_link_libraries(BimCore_SDK PUBLIC
+# Link libraries
+target_link_libraries(BIMCoreEditor PRIVATE 
     imgui glfw webgpu glfw3webgpu
     IfcOpenShell::IfcParse IfcOpenShell::IfcGeom
     nlohmann_json::nlohmann_json tinygltf
 )
 
-# ==============================================================================
-# 6. THE EDITOR APPLICATION
-# ==============================================================================
-add_executable(BIMCoreEditor
-    apps/editor/main.cpp
-    apps/editor/EditorApp.cpp
-    apps/editor/AppUI.cpp
-    apps/editor/InputController.cpp
-    apps/editor/EngineConfig.cpp
-    apps/editor/ui/UIStatusOverlay.cpp
-    apps/editor/ui/UIMainPanel.cpp
-    apps/editor/ui/UIPropertiesPanel.cpp
-)
-target_include_directories(BIMCoreEditor PRIVATE apps/editor sdk/src "${GLM_INCLUDE_DIR}")
-target_link_libraries(BIMCoreEditor PRIVATE BimCore_SDK)
 if(UNIX AND NOT APPLE)
     target_link_libraries(BIMCoreEditor PRIVATE X11 dl pthread)
 endif()
 
 # ==============================================================================
-# 7. ASSET & RUNTIME DEPLOYMENT (Pristine Dist Folder)
+# 6. ASSET & RUNTIME DEPLOYMENT (Pristine Dist Folder)
 # ==============================================================================
 set(DIST_DIR "${CMAKE_SOURCE_DIR}/dist")
 
@@ -184,7 +191,7 @@ add_custom_command(TARGET BIMCoreEditor POST_BUILD
     # Copy the application and assets
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:BIMCoreEditor>" "${DIST_DIR}/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/fa-solid-900.ttf" "${DIST_DIR}/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/apps/editor/settings.ini" "${DIST_DIR}/"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/settings.ini" "${DIST_DIR}/"
 
     COMMENT "Publishing pristine build to /dist folder..."
 )
@@ -207,7 +214,6 @@ if(WGPU_LIB)
 endif()
 
 # Copy ONLY the heavy SDK DLLs we actually need (Windows Only)
-# Linux manages shared objects via RPATH, so we don't need to bloat the dist folder here.
 if(WIN32)
     file(GLOB RUNTIME_DLLS
         "${BIMCORE_SDK_BIN_DIR}/Ifc*.dll"
