@@ -4,6 +4,8 @@
 #include "input/InputController.h"
 #include <imgui.h>
 #include <GLFW/glfw3.h>
+#include <ImGuizmo.h>
+#include <ifcparse/IfcFile.h>
 #include <algorithm>
 #include "core/Core.h"
 
@@ -23,7 +25,7 @@ namespace BimCore {
         uint32_t&                    currentLightingMode,
         bool&                        triggerFocus)
     {
-        bool uiHovered = ImGui::GetIO().WantCaptureMouse;
+        bool uiHovered = ImGui::GetIO().WantCaptureMouse || ImGuizmo::IsOver();
         bool uiTyping  = ImGui::GetIO().WantTextInput;
 
         if (!uiTyping) {
@@ -31,9 +33,10 @@ namespace BimCore {
             if (uiNow && !m_uiWasDown) selection.showUI = !selection.showUI;
             m_uiWasDown = uiNow;
 
+            // --- FIXED: Map keys 1, 2, 3 to the new tools ---
             if (window.IsKeyPressed(config.KeyToolSelect)) selection.activeTool = InteractionTool::Select;
-            if (window.IsKeyPressed(config.KeyToolPan))    selection.activeTool = InteractionTool::Pan;
-            if (window.IsKeyPressed(config.KeyToolOrbit))  selection.activeTool = InteractionTool::Orbit;
+            if (window.IsKeyPressed(config.KeyToolPan))    selection.activeTool = InteractionTool::Move;
+            if (window.IsKeyPressed(config.KeyToolOrbit))  selection.activeTool = InteractionTool::Rotate;
 
             static bool mWasDown = false;
             bool mNow = window.IsKeyPressed(config.KeyToolMeasure);
@@ -128,16 +131,15 @@ namespace BimCore {
                 if (window.IsKeyPressed(GLFW_KEY_RIGHT)) camera.ProcessOrbit(keyboardOrbitSpeed, 0.0f);
             }
 
+            // --- FIXED: Pure MMB/RMB Camera Navigation ---
             if (!uiHovered) {
-                bool leftClickPan   = !selection.measureToolActive && (selection.activeTool == InteractionTool::Pan) && window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
-                bool leftClickOrbit = !selection.measureToolActive && (selection.activeTool == InteractionTool::Orbit) && window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
                 bool mmbPan   = window.IsMouseButtonPressed(config.CadPanButton) && !window.IsKeyPressed(config.CadOrbitModifier);
                 bool mmbOrbit = window.IsMouseButtonPressed(config.CadPanButton) && window.IsKeyPressed(config.CadOrbitModifier);
                 bool rmbOrbit = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT);
 
-                if (leftClickPan || mmbPan) {
+                if (mmbPan) {
                     camera.ProcessPan(rawDeltaX * config.MouseSensitivityX * config.CadPanSpeed, -rawDeltaY * config.MouseSensitivityY * config.CadPanSpeed);
-                } else if (leftClickOrbit || mmbOrbit || rmbOrbit) {
+                } else if (mmbOrbit || rmbOrbit) {
                     camera.ProcessOrbit(rawDeltaX * config.MouseSensitivityX * config.CadOrbitSpeed, -rawDeltaY * config.MouseSensitivityY * config.CadOrbitSpeed);
                 }
             }
@@ -149,7 +151,7 @@ namespace BimCore {
                 closestHit.distance = 1e9f;
 
                 for (auto& doc : documents) {
-                    if (doc->IsHidden()) continue; // --- FIXED: Don't raycast hidden models ---
+                    if (doc->IsHidden()) continue;
                     HitResult hit = Raycaster::CastRay(ray, doc->GetGeometry(), selection.clipXMin, selection.clipXMax, selection.clipYMin, selection.clipYMax, selection.clipZMin, selection.clipZMax, selection.hiddenObjects, !selection.showOpeningsAndSpaces);
                     if (hit.hit && hit.distance < closestHit.distance) {
                         closestHit = hit;
@@ -219,7 +221,8 @@ namespace BimCore {
 
                 m_mouseWasDown = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
 
-            } else if (selection.activeTool == InteractionTool::Select && !uiHovered && !documents.empty()) {
+            // --- FIXED: Always allow raycast selection unless we are hovering the UI/Gizmo! ---
+            } else if (!uiHovered && !documents.empty()) {
                 HandleMousePicking(window, camera, documents, selection, config);
             } else {
                 m_mouseWasDown = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
@@ -246,7 +249,7 @@ namespace BimCore {
             std::shared_ptr<SceneModel> hitDoc = nullptr;
 
             for (auto& doc : documents) {
-                if (doc->IsHidden()) continue; // --- FIXED: Don't raycast hidden models ---
+                if (doc->IsHidden()) continue;
                 HitResult hit = Raycaster::CastRay(ray, doc->GetGeometry(), cXMin, cXMax, cYMin, cYMax, cZMin, cZMax, selection.hiddenObjects, !selection.showOpeningsAndSpaces);
                 if (hit.hit && hit.distance < closestHit.distance) {
                     closestHit = hit;
@@ -263,9 +266,22 @@ namespace BimCore {
 
                 if (selection.selectAssemblies) {
                     std::string rootGuid = baseClickGuid;
+                    
                     while (true) {
                         std::string p = hitDoc->GetParent(rootGuid);
                         if (p.empty()) break;
+                        
+                        try {
+                            IfcUtil::IfcBaseClass* parentObj = hitDoc->GetDatabase()->instance_by_guid(p);
+                            if (parentObj) {
+                                std::string pType = parentObj->declaration().name();
+                                if (pType == "IfcBuildingStorey" || pType == "IfcBuilding" || 
+                                    pType == "IfcSite" || pType == "IfcProject" || pType == "IfcSpace") {
+                                    break;
+                                }
+                            }
+                        } catch(...) {}
+
                         rootGuid = p;
                     }
 

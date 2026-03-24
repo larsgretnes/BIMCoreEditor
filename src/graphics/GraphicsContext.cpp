@@ -647,7 +647,7 @@ namespace BimCore {
         wgpuPipelineLayoutRelease(layout);
     }
 
-    void GraphicsContext::CreateStencilPipelines() {
+void GraphicsContext::CreateStencilPipelines() {
         WGPUShaderModule maskShader = CreateShaderModule(Shaders::kMaskWGSL);
         WGPUShaderModule capShader  = CreateShaderModule(Shaders::kCapWGSL);
 
@@ -657,18 +657,25 @@ namespace BimCore {
         std::vector<WGPUVertexAttribute> attrs;
         WGPUVertexBufferLayout vbl = MakeVertexBufferLayout(attrs);
 
+        // --- FIXED: The Mathematical Stencil Counting Algorithm ---
         WGPUDepthStencilState maskDs = {};
         maskDs.format = WGPUTextureFormat_Depth24PlusStencil8;
         maskDs.depthWriteEnabled = WGPUOptionalBool_False;
-        maskDs.depthCompare = WGPUCompareFunction_Less;
+        maskDs.depthCompare = WGPUCompareFunction_Always; // Ignore depth, count everything!
+
+        WGPUStencilFaceState frontFace = {};
+        frontFace.compare = WGPUCompareFunction_Always;
+        frontFace.failOp = WGPUStencilOperation_Keep;
+        frontFace.depthFailOp = WGPUStencilOperation_Keep;
+        frontFace.passOp = WGPUStencilOperation_IncrementWrap; // Front faces +1
 
         WGPUStencilFaceState backFace = {};
         backFace.compare = WGPUCompareFunction_Always;
         backFace.failOp = WGPUStencilOperation_Keep;
         backFace.depthFailOp = WGPUStencilOperation_Keep;
-        backFace.passOp = WGPUStencilOperation_Replace;
+        backFace.passOp = WGPUStencilOperation_DecrementWrap; // Back faces -1
 
-        maskDs.stencilFront = backFace;
+        maskDs.stencilFront = frontFace;
         maskDs.stencilBack = backFace;
         maskDs.stencilReadMask = 0xFF;
         maskDs.stencilWriteMask = 0xFF;
@@ -690,7 +697,7 @@ namespace BimCore {
         pdMask.vertex.bufferCount = 1;
         pdMask.vertex.buffers = &vbl;
         pdMask.primitive.topology = WGPUPrimitiveTopology_TriangleList;
-        pdMask.primitive.cullMode = WGPUCullMode_Front;
+        pdMask.primitive.cullMode = WGPUCullMode_None; // CRITICAL: Render BOTH faces to count them
         pdMask.primitive.frontFace = WGPUFrontFace_CCW;
         pdMask.depthStencil = &maskDs;
         pdMask.fragment = &maskFrag;
@@ -701,14 +708,14 @@ namespace BimCore {
 
         WGPUDepthStencilState capDs = {};
         capDs.format = WGPUTextureFormat_Depth24PlusStencil8;
-        capDs.depthWriteEnabled = WGPUOptionalBool_True;
-        capDs.depthCompare = WGPUCompareFunction_Always;
+        capDs.depthWriteEnabled = WGPUOptionalBool_True; // Write depth so overlapping caps occlude correctly
+        capDs.depthCompare = WGPUCompareFunction_LessEqual;
 
         WGPUStencilFaceState capFace = {};
-        capFace.compare = WGPUCompareFunction_Equal;
+        capFace.compare = WGPUCompareFunction_NotEqual; // Only draw where Stencil != 0
         capFace.failOp = WGPUStencilOperation_Keep;
         capFace.depthFailOp = WGPUStencilOperation_Keep;
-        capFace.passOp = WGPUStencilOperation_Keep;
+        capFace.passOp = WGPUStencilOperation_Zero; // Clear the stencil as we draw
 
         capDs.stencilFront = capFace;
         capDs.stencilBack = capFace;
@@ -957,7 +964,7 @@ namespace BimCore {
         wgpuQueueWriteBuffer(m_queue, m_aabbVertexBuffer, 0, v, sizeof(v));
     }
 
-    void GraphicsContext::SetClippingPlanes(
+void GraphicsContext::SetClippingPlanes(
         bool actXMin, float xMin, bool actXMax, float xMax, const float* colX,
         bool actYMin, float yMin, bool actYMax, float yMax, const float* colY,
         bool actZMin, float zMin, bool actZMax, float zMax, const float* colZ,
@@ -971,7 +978,10 @@ namespace BimCore {
         const glm::vec3 minP = minB - glm::vec3(2.0f);
         const glm::vec3 maxP = maxB + glm::vec3(2.0f);
 
-        auto addPlane = [&](float px, float py, float pz, float nx, float ny, float nz, float cr, float cg, float cb, bool activeForGlass) {
+        auto addPlane = [&](float px, float py, float pz, float nx, float ny, float nz, float cr, float cg, float cb, bool isActive) {
+            // --- FIXED: If the plane is turned off, do not render its capping quad! ---
+            if (!isActive) return;
+
             Vertex v[4] = {};
             for(int i=0; i<4; ++i) {
                 v[i].normal[0]=nx; v[i].normal[1]=ny; v[i].normal[2]=nz;
@@ -998,11 +1008,9 @@ namespace BimCore {
             capVerts.insert(capVerts.end(), {v[0], v[1], v[2], v[3]});
             capInds.insert(capInds.end(), {ci, ci+1, ci+2, ci, ci+2, ci+3});
 
-            if (activeForGlass) {
-                uint32_t gi = static_cast<uint32_t>(glassVerts.size());
-                glassVerts.insert(glassVerts.end(), {v[0], v[1], v[2], v[3]});
-                glassInds.insert(glassInds.end(), {gi, gi+1, gi+2, gi, gi+2, gi+3});
-            }
+            uint32_t gi = static_cast<uint32_t>(glassVerts.size());
+            glassVerts.insert(glassVerts.end(), {v[0], v[1], v[2], v[3]});
+            glassInds.insert(glassInds.end(), {gi, gi+1, gi+2, gi, gi+2, gi+3});
         };
 
         addPlane(xMin+0.001f, 0, 0,  1,0,0, colX[0], colX[1], colX[2], actXMin);
@@ -1024,7 +1032,7 @@ namespace BimCore {
             wgpuQueueWriteBuffer(m_queue, m_glassIndexBuffer,  0, glassInds.data(),  glassInds.size()*sizeof(uint32_t));
         }
     }
-
+    
     void GraphicsContext::RenderFrame() {
         if (!m_sceneBindGroup) return;
 
@@ -1077,7 +1085,6 @@ namespace BimCore {
             wgpuRenderPassEncoderSetPipeline(rp, m_stencilMaskPipeline);
             wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_vertexBuffer, 0, WGPU_WHOLE_SIZE);
             wgpuRenderPassEncoderSetIndexBuffer(rp, m_activeIndexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
-            wgpuRenderPassEncoderSetStencilReference(rp, 1);
             wgpuRenderPassEncoderDrawIndexed(rp, m_activeIndexCount, 1, 0, 0, 0);
         }
 
@@ -1085,7 +1092,7 @@ namespace BimCore {
             wgpuRenderPassEncoderSetPipeline(rp, m_capPipeline);
             wgpuRenderPassEncoderSetVertexBuffer(rp, 0, m_capVertexBuffer, 0, WGPU_WHOLE_SIZE);
             wgpuRenderPassEncoderSetIndexBuffer(rp, m_capIndexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
-            wgpuRenderPassEncoderSetStencilReference(rp, 1);
+            wgpuRenderPassEncoderSetStencilReference(rp, 0); // Check for NotEqual 0
             wgpuRenderPassEncoderDrawIndexed(rp, m_capIndexCount, 1, 0, 0, 0);
         }
 

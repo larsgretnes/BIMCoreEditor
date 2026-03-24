@@ -110,7 +110,11 @@ FetchContent_Declare(nlohmann_json GIT_REPOSITORY https://github.com/nlohmann/js
 FetchContent_Declare(tinygltf GIT_REPOSITORY https://github.com/syoyo/tinygltf.git GIT_TAG v2.8.3)
 FetchContent_Declare(mini GIT_REPOSITORY https://github.com/pulzed/mINI.git GIT_TAG 0.9.14)
 
-FetchContent_MakeAvailable(webgpu glfw3webgpu imgui_fetch nlohmann_json tinygltf mini)
+# --- NEW: Fetch ImGuizmo ---
+FetchContent_Declare(imguizmo GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git GIT_TAG master)
+
+# Make sure imguizmo is added to this list!
+FetchContent_MakeAvailable(webgpu glfw3webgpu imgui_fetch nlohmann_json tinygltf mini imguizmo)
 
 if(TARGET tinygltf AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(tinygltf PRIVATE -w)
@@ -127,8 +131,16 @@ add_library(imgui STATIC
     ${IMGUI_DIR}/imgui_widgets.cpp
     ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
     ${IMGUI_DIR}/backends/imgui_impl_wgpu.cpp
+    # --- NEW: Compile ImGuizmo right into the ImGui library ---
+    ${imguizmo_SOURCE_DIR}/ImGuizmo.cpp 
 )
-target_include_directories(imgui PUBLIC ${IMGUI_DIR} ${IMGUI_DIR}/backends)
+
+# --- NEW: Add the ImGuizmo folder to the include directories ---
+target_include_directories(imgui PUBLIC 
+    ${IMGUI_DIR} 
+    ${IMGUI_DIR}/backends
+    ${imguizmo_SOURCE_DIR} 
+)
 target_compile_definitions(imgui PUBLIC IMGUI_IMPL_WEBGPU_BACKEND_WGPU)
 target_link_libraries(imgui PUBLIC webgpu glfw)
 
@@ -191,7 +203,6 @@ add_custom_command(TARGET BIMCoreEditor POST_BUILD
     # Copy the application and assets
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:BIMCoreEditor>" "${DIST_DIR}/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/fa-solid-900.ttf" "${DIST_DIR}/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/settings.ini" "${DIST_DIR}/"
 
     COMMENT "Publishing pristine build to /dist folder..."
 )

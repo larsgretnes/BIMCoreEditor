@@ -27,7 +27,9 @@ namespace BimCore {
 
         bool editingActiveAtStartOfFrame = !state.activeEditGuid.empty();
 
-        m_mainPanel.Render(state, documents, configMaxExplode, triggerFocus, triggerRebuild);
+        // --- FIXED: Appended &camera to this call to pass it to the UI ---
+        m_mainPanel.Render(state, documents, configMaxExplode, triggerFocus, triggerRebuild, &camera);
+        
         m_overlay.RenderStatusPanel(state, documents);
         m_propertiesPanel.Render(state, documents, triggerFocus);
         m_overlay.RenderContextMenu(state, triggerFocus);

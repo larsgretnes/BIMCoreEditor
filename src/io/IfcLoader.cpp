@@ -13,6 +13,8 @@
 #include <ifcparse/IfcFile.h>
 #include <ifcgeom/Iterator.h>
 #include <ifcgeom/kernels/opencascade/OpenCascadeKernel.h>
+#include <ifcparse/Ifc2x3.h>
+#include <ifcparse/Ifc4.h>
 
 namespace BimCore {
 
@@ -128,7 +130,6 @@ namespace BimCore {
                             if (inserted) {
                                 Vertex vertex = {};
 
-                                // --- FIXED: Strict 1:1 Mapping for Z-Up ---
                                 vertex.position[0] = static_cast<float>(verts[vOff]);
                                 vertex.position[1] = static_cast<float>(verts[vOff + 1]);
                                 vertex.position[2] = static_cast<float>(verts[vOff + 2]);
@@ -140,7 +141,6 @@ namespace BimCore {
                                     if (vertex.position[j] > maxB[j])   maxB[j]   = vertex.position[j];
                                 }
                                 if (vOff + 2 < static_cast<int>(normals.size())) {
-                                    // --- FIXED: Strict 1:1 Mapping for Normals ---
                                     vertex.normal[0] = static_cast<float>(normals[vOff]);
                                     vertex.normal[1] = static_cast<float>(normals[vOff + 1]);
                                     vertex.normal[2] = static_cast<float>(normals[vOff + 2]);
@@ -182,80 +182,63 @@ namespace BimCore {
 
             auto doc = std::make_shared<SceneModel>(ifcDb, std::move(mesh), filepath);
 
-            // --- 5. DIRECT TEXT-BASED HIERARCHY PARSER ---
+            // =================================================================
+            // FIXED: AST-Based Spatial Hierarchy Extraction
+            // =================================================================
             if (state) state->SetStatus("Resolving spatial hierarchy...", 0.95f);
-
-            std::unordered_map<int, std::string> stepIdToGuid;
-            std::vector<std::pair<int, std::vector<int>>> rawAggregates;
-
-            std::ifstream infile(filepath);
-            std::string line, buffer;
-            while (std::getline(infile, line)) {
-                line.erase(std::remove(line.begin(), line.end(), '\r'), line.end());
-                line.erase(std::remove(line.begin(), line.end(), '\n'), line.end());
-                buffer += line;
-                if (buffer.empty()) continue;
-
-                if (buffer.back() == ';') {
-                    if (buffer[0] == '#') {
-                        size_t eqPos = buffer.find('=');
-                        if (eqPos != std::string::npos) {
-                            int id = std::stoi(buffer.substr(1, eqPos - 1));
-
-                            size_t q1 = buffer.find('\'', eqPos);
-                            if (q1 != std::string::npos) {
-                                size_t q2 = buffer.find('\'', q1 + 1);
-                                if (q2 != std::string::npos && (q2 - q1) == 23) {
-                                    stepIdToGuid[id] = buffer.substr(q1 + 1, 22);
-                                }
-                            }
-
-                            if (buffer.find("IFCRELAGGREGATES") != std::string::npos) {
-                                size_t listEnd = buffer.find_last_of(')');
-                                if (listEnd != std::string::npos) listEnd = buffer.find_last_of(')', listEnd - 1);
-                                size_t listStart = std::string::npos;
-                                if (listEnd != std::string::npos) listStart = buffer.find_last_of('(', listEnd);
-
-                                if (listStart != std::string::npos && listEnd != std::string::npos && listStart < listEnd) {
-                                    size_t relatingEnd = buffer.find_last_of(',', listStart);
-                                    if (relatingEnd != std::string::npos) {
-                                        size_t relatingStart = buffer.find_last_of(",(", relatingEnd - 1);
-                                        if (relatingStart != std::string::npos) {
-                                            std::string relatingStr = buffer.substr(relatingStart + 1, relatingEnd - relatingStart - 1);
-                                            size_t hashPos = relatingStr.find('#');
-                                            if (hashPos != std::string::npos) {
-                                                int parentId = std::stoi(relatingStr.substr(hashPos + 1));
-                                                std::vector<int> childIds;
-                                                std::string childrenStr = buffer.substr(listStart + 1, listEnd - listStart - 1);
-                                                size_t pos = 0;
-                                                while ((pos = childrenStr.find('#', pos)) != std::string::npos) {
-                                                    int childId = std::stoi(childrenStr.substr(pos + 1));
-                                                    childIds.push_back(childId);
-                                                    pos++;
-                                                }
-                                                if (!childIds.empty()) {
-                                                    rawAggregates.push_back({parentId, childIds});
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    buffer.clear();
-                }
-            }
 
             std::unordered_map<std::string, std::string> childToParent;
             std::unordered_map<std::string, std::vector<std::string>> parentToChildren;
 
-            for (const auto& agg : rawAggregates) {
-                if (stepIdToGuid.count(agg.first) > 0) {
-                    std::string pGuid = stepIdToGuid[agg.first];
-                    for (int cId : agg.second) {
-                        if (stepIdToGuid.count(cId) > 0) {
-                            std::string cGuid = stepIdToGuid[cId];
+            // Pass 1: Extract Spatial Aggregation (Project -> Site -> Building -> Storey)
+            auto aggregates = ifcDb->instances_by_type("IfcRelAggregates");
+            if (aggregates) {
+                for (auto* inst : *aggregates) {
+                    if (auto rel4 = inst->as<Ifc4::IfcRelAggregates>()) {
+                        auto parent = rel4->RelatingObject();
+                        auto children = rel4->RelatedObjects();
+                        if (!parent || !children) continue;
+                        std::string pGuid = parent->GlobalId();
+                        for (auto* child : *children) {
+                            std::string cGuid = child->GlobalId();
+                            childToParent[cGuid] = pGuid;
+                            parentToChildren[pGuid].push_back(cGuid);
+                        }
+                    } else if (auto rel2 = inst->as<Ifc2x3::IfcRelAggregates>()) {
+                        auto parent = rel2->RelatingObject();
+                        auto children = rel2->RelatedObjects();
+                        if (!parent || !children) continue;
+                        std::string pGuid = parent->GlobalId();
+                        for (auto* child : *children) {
+                            std::string cGuid = child->GlobalId();
+                            childToParent[cGuid] = pGuid;
+                            parentToChildren[pGuid].push_back(cGuid);
+                        }
+                    }
+                }
+            }
+
+            // Pass 2: Extract Spatial Containment (Storey -> Walls, Doors, Elements)
+            auto contained = ifcDb->instances_by_type("IfcRelContainedInSpatialStructure");
+            if (contained) {
+                for (auto* inst : *contained) {
+                    if (auto rel4 = inst->as<Ifc4::IfcRelContainedInSpatialStructure>()) {
+                        auto parent = rel4->RelatingStructure();
+                        auto children = rel4->RelatedElements();
+                        if (!parent || !children) continue;
+                        std::string pGuid = parent->GlobalId();
+                        for (auto* child : *children) {
+                            std::string cGuid = child->GlobalId();
+                            childToParent[cGuid] = pGuid;
+                            parentToChildren[pGuid].push_back(cGuid);
+                        }
+                    } else if (auto rel2 = inst->as<Ifc2x3::IfcRelContainedInSpatialStructure>()) {
+                        auto parent = rel2->RelatingStructure();
+                        auto children = rel2->RelatedElements();
+                        if (!parent || !children) continue;
+                        std::string pGuid = parent->GlobalId();
+                        for (auto* child : *children) {
+                            std::string cGuid = child->GlobalId();
                             childToParent[cGuid] = pGuid;
                             parentToChildren[pGuid].push_back(cGuid);
                         }
@@ -264,7 +247,7 @@ namespace BimCore {
             }
 
             doc->SetHierarchy(childToParent, parentToChildren);
-            BIM_LOG("IfcLoader", "Hierarchy resolved via direct text parsing: " << parentToChildren.size() << " assemblies found.");
+            BIM_LOG("IfcLoader", "Hierarchy securely resolved: " << parentToChildren.size() << " containers mapped.");
 
             if (state) state->SetStatus("Ready.", 1.0f);
             return doc;

@@ -8,6 +8,7 @@
 #include <map>
 #include <unordered_map>
 #include <memory>
+#include <glm/glm.hpp>
 #include <ifcparse/IfcFile.h>
 
 #include "graphics/GraphicsContext.h"
@@ -58,15 +59,24 @@ namespace BimCore {
     class SceneModel {
     public:
         SceneModel(std::shared_ptr<IfcParse::IfcFile> database,
-                    RenderMesh                         geometry,
-                    const std::string&                 path);
+                    RenderMesh                        geometry,
+                    const std::string&                path);
 
         SceneModel(const SceneModel&)            = delete;
         SceneModel& operator=(const SceneModel&) = delete;
 
-        RenderMesh&                             GetGeometry();
-        std::shared_ptr<IfcParse::IfcFile>      GetDatabase();
-        std::string                             GetFilePath() const;
+        RenderMesh&                            GetGeometry();
+        std::shared_ptr<IfcParse::IfcFile>     GetDatabase();
+        std::string                            GetFilePath() const;
+
+        // --- FIXED: Per-Object Matrix Transform Storage ---
+        glm::mat4 GetObjectTransform(const std::string& guid) const {
+            auto it = m_objectTransforms.find(guid);
+            return it != m_objectTransforms.end() ? it->second : glm::mat4(1.0f);
+        }
+        void SetObjectTransform(const std::string& guid, const glm::mat4& mat) {
+            m_objectTransforms[guid] = mat;
+        }
 
         std::map<std::string, PropertyInfo> GetElementProperties(const std::string& guid);
         bool UpdateElementProperty(const std::string& guid, const std::string& key, const std::string& value);
@@ -106,9 +116,10 @@ namespace BimCore {
         bool IsHidden() const { return m_isHidden; }
         void SetHidden(bool hidden) { m_isHidden = hidden; }
 
-        // --- NEW: UI Group Caching ---
         const std::map<std::string, std::vector<uint32_t>>& GetUIGroups() const { return m_uiGroups; }
         void BuildUIGroups();
+
+        void ClearTransforms() { m_objectTransforms.clear(); }
 
     private:
         void LoadPropertiesFromAST(const std::string& guid);
@@ -117,11 +128,13 @@ namespace BimCore {
         RenderMesh                                                      m_geometry;
         std::string                                                     m_filePath;
         std::map<std::string, std::map<std::string, PropertyInfo>>      m_propertyCache;
-        std::unordered_map<std::string, std::string>              m_childToParent;
+        std::unordered_map<std::string, std::string>                    m_childToParent;
         std::unordered_map<std::string, std::vector<std::string>> m_parentToChildren;
 
         std::map<std::string, std::vector<uint32_t>>              m_uiGroups;
         bool m_isHidden = false;
+        
+        std::unordered_map<std::string, glm::mat4> m_objectTransforms;
     };
 
 } // namespace BimCore

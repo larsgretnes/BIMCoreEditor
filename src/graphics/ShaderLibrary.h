@@ -171,12 +171,16 @@ struct VertOut { @builtin(position) clip : vec4<f32>, @location(0) wpos : vec3<f
 
 static constexpr const char* kCapWGSL = R"(
 struct VertIn  { @location(0) pos: vec3<f32>, @location(1) nor: vec3<f32>, @location(2) col: vec3<f32>, @location(3) uv: vec2<f32> };
-struct VertOut { @builtin(position) clip : vec4<f32> };
+struct VertOut { @builtin(position) clip : vec4<f32>, @location(0) col: vec3<f32> };
+
 @vertex fn vs_main(v : VertIn) -> VertOut {
-    var o : VertOut; o.clip = scene.viewProjection * vec4<f32>(v.pos, 1.0); return o;
+    var o : VertOut; 
+    o.clip = scene.viewProjection * vec4<f32>(v.pos, 1.0); 
+    o.col = v.col; 
+    return o;
 }
 @fragment fn fs_main(in : VertOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(0.25, 0.26, 0.27, 1.0);
+    return vec4<f32>(in.col, 1.0); // Now uses the UI-defined clipping plane color!
 }
 )";
 

@@ -19,8 +19,7 @@
 
 namespace BimCore {
 
-    // --- FIXED: Reverted to the core 3 tools. Measure is now an independent mode! ---
-    enum class InteractionTool { Select, Pan, Orbit };
+    enum class InteractionTool { Select, Move, Rotate };
     enum class SnapType { None, Vertex, Edge, Face };
 
     struct Measurement {
@@ -81,6 +80,10 @@ namespace BimCore {
         float                           explodeFactor      = 0.0f;
         bool                            updateGeometry     = false;
 
+        // --- FIXED: Added Dynamic Scene Bounds ---
+        float                           sceneMinBounds[3]  = { -100.0f, -100.0f, -100.0f };
+        float                           sceneMaxBounds[3]  = {  100.0f,  100.0f,  100.0f };
+
         bool                            showPlaneXMin = false, showPlaneXMax = false;
         bool                            showPlaneYMin = false, showPlaneYMax = false;
         bool                            showPlaneZMin = false, showPlaneZMax = false;
@@ -122,7 +125,6 @@ namespace BimCore {
         int                                          lastClickedVisualIndex = -1;
         std::string                                  lastClickedGroup       = "";
 
-        // --- NEW: Independent Measure Mode Toggle ---
         bool                       measureToolActive = false;
 
         std::vector<Measurement>   completedMeasurements;

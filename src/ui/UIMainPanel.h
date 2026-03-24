@@ -3,15 +3,19 @@
 // =============================================================================
 #pragma once
 #include "UIState.h"
-#include <memory>
+#include "scene/SceneModel.h"
+#include "graphics/Camera.h" // --- FIXED: Give the header access to the Camera ---
 #include <vector>
+#include <memory>
 
 namespace BimCore {
     class UIMainPanel {
     public:
-        void Render(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents, float configMaxExplode, bool& triggerFocus, bool& triggerRebuild);
+        // --- FIXED: Added Camera* camera to the signature ---
+        static void Render(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents, float configMaxExplode, bool& triggerFocus, bool& triggerRebuild, Camera* camera);
+        
     private:
-        void DrawResetModal(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents, bool& triggerRebuild);
-        void HandleShiftSelection(SelectionState& state, int visualIdx, uint32_t subMeshIdx, const std::string& groupName, const std::vector<uint32_t>& currentArray, std::shared_ptr<SceneModel> document);
+        static void HandleShiftSelection(SelectionState& state, int visualIdx, uint32_t meshIdx, const std::string& groupName, const std::vector<uint32_t>& currentArray, std::shared_ptr<SceneModel> document);
+        static void DrawResetModal(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents, bool& triggerRebuild);
     };
-}
+} // namespace BimCore

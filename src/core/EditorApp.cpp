@@ -141,6 +141,9 @@ namespace BimCore {
             for (int j=0; j<3; ++j) {
                 m_masterMinBounds[j] = minB[j];
                 m_masterMaxBounds[j] = maxB[j];
+                // --- FIXED: Push original bounds to UI ---
+                m_uiSystem.state.sceneMinBounds[j] = minB[j];
+                m_uiSystem.state.sceneMaxBounds[j] = maxB[j];
             }
         }
 
@@ -192,25 +195,6 @@ namespace BimCore {
             if (m_uiSystem.state.hiddenStateChanged) {
                 m_triggerBatchRebuild = true;
                 m_uiSystem.state.hiddenStateChanged = false;
-            }
-
-            if (m_uiSystem.state.triggerResetCamera && !m_documents.empty()) {
-                m_uiSystem.state.triggerResetCamera = false;
-                
-                float minB[3] = { kFloatMax, kFloatMax, kFloatMax };
-                float maxB[3] = { kFloatMin, kFloatMin, kFloatMin };
-                for (auto& doc : m_documents) {
-                    auto& geom = doc->GetGeometry();
-                    for (int j=0; j<3; ++j) {
-                        if (geom.minBounds[j] < minB[j]) minB[j] = geom.minBounds[j];
-                        if (geom.maxBounds[j] > maxB[j]) maxB[j] = geom.maxBounds[j];
-                    }
-                }
-                glm::vec3 globalCenter((minB[0]+maxB[0])*0.5f, (minB[1]+maxB[1])*0.5f, (minB[2]+maxB[2])*0.5f);
-                glm::vec3 extents(maxB[0] - minB[0], maxB[1] - minB[1], maxB[2] - minB[2]);
-                float radius = glm::length(extents) * 0.5f;
-
-                m_camera->FocusOn(globalCenter, std::max(1.0f, radius));
             }
 
             m_uiSystem.NewFrame();
@@ -286,6 +270,21 @@ namespace BimCore {
             if (m_triggerRebuild) RebuildMasterMesh();
             if (m_triggerBatchRebuild) RebuildRenderBatches();
             
+            if (m_uiSystem.state.triggerResetCamera && !m_documents.empty()) {
+                m_uiSystem.state.triggerResetCamera = false;
+                
+                // --- FIXED: Reset camera perfectly centers on current transformed bounds ---
+                glm::vec3 globalCenter((m_masterMinBounds[0]+m_masterMaxBounds[0])*0.5f, 
+                                       (m_masterMinBounds[1]+m_masterMaxBounds[1])*0.5f, 
+                                       (m_masterMinBounds[2]+m_masterMaxBounds[2])*0.5f);
+                glm::vec3 extents(m_masterMaxBounds[0] - m_masterMinBounds[0], 
+                                  m_masterMaxBounds[1] - m_masterMinBounds[1], 
+                                  m_masterMaxBounds[2] - m_masterMinBounds[2]);
+                float radius = glm::length(extents) * 0.5f;
+
+                m_camera->FocusOn(globalCenter, std::max(1.0f, radius));
+            }
+
             Update(deltaTime, triggerFocus);
             Render();
         }
@@ -514,19 +513,41 @@ namespace BimCore {
             auto& geom = doc->GetGeometry();
             geom.vertices = geom.originalVertices;
 
-            if (m_uiSystem.state.explodeFactor > 0.01f) {
-                std::vector<bool> shifted(geom.vertices.size(), false);
-                for (const auto& sub : geom.subMeshes) {
-                    glm::vec3 subCenter(sub.center[0], sub.center[1], sub.center[2]);
-                    glm::vec3 dir = subCenter - globalCenter;
-                    glm::vec3 offset = dir * m_uiSystem.state.explodeFactor;
+            std::vector<bool> shifted(geom.vertices.size(), false);
 
+            for (const auto& sub : geom.subMeshes) {
+                glm::vec3 subCenter(sub.center[0], sub.center[1], sub.center[2]);
+                glm::vec3 dir = subCenter - globalCenter;
+                glm::vec3 explodeOffset = dir * m_uiSystem.state.explodeFactor;
+
+                glm::mat4 objMat = doc->GetObjectTransform(sub.guid);
+                bool hasTransform = (objMat != glm::mat4(1.0f));
+                glm::mat3 normalMat = glm::transpose(glm::inverse(glm::mat3(objMat)));
+
+                if (m_uiSystem.state.explodeFactor > 0.01f || hasTransform) {
                     for (uint32_t i = 0; i < sub.indexCount; ++i) {
                         uint32_t vIdx = geom.indices[sub.startIndex + i];
                         if (!shifted[vIdx]) {
-                            geom.vertices[vIdx].position[0] += offset.x;
-                            geom.vertices[vIdx].position[1] += offset.y;
-                            geom.vertices[vIdx].position[2] += offset.z;
+                            
+                            if (hasTransform) {
+                                glm::vec4 p = objMat * glm::vec4(geom.vertices[vIdx].position[0], geom.vertices[vIdx].position[1], geom.vertices[vIdx].position[2], 1.0f);
+                                geom.vertices[vIdx].position[0] = p.x; 
+                                geom.vertices[vIdx].position[1] = p.y; 
+                                geom.vertices[vIdx].position[2] = p.z;
+                                
+                                glm::vec3 n = normalMat * glm::vec3(geom.vertices[vIdx].normal[0], geom.vertices[vIdx].normal[1], geom.vertices[vIdx].normal[2]);
+                                if (glm::length(n) > 0.0001f) n = glm::normalize(n);
+                                geom.vertices[vIdx].normal[0] = n.x; 
+                                geom.vertices[vIdx].normal[1] = n.y; 
+                                geom.vertices[vIdx].normal[2] = n.z;
+                            }
+
+                            if (m_uiSystem.state.explodeFactor > 0.01f) {
+                                geom.vertices[vIdx].position[0] += explodeOffset.x;
+                                geom.vertices[vIdx].position[1] += explodeOffset.y;
+                                geom.vertices[vIdx].position[2] += explodeOffset.z;
+                            }
+
                             shifted[vIdx] = true;
                         }
                     }
@@ -550,6 +571,10 @@ namespace BimCore {
             }
             m_masterMinBounds[j] = newMin[j];
             m_masterMaxBounds[j] = newMax[j];
+
+            // --- FIXED: Push the dynamic transformed bounds to the UI! ---
+            m_uiSystem.state.sceneMinBounds[j] = newMin[j];
+            m_uiSystem.state.sceneMaxBounds[j] = newMax[j];
         }
 
         m_uiSystem.state.clipXMin = newMin[0] + pctXMin * (newMax[0] - newMin[0]);
@@ -590,10 +615,12 @@ namespace BimCore {
             m_graphics->SetHighlight(false, {}, 0);
         }
 
+        bool showClips = (m_uiSystem.state.activeTool == InteractionTool::Select);
+
         m_graphics->SetClippingPlanes(
-            m_uiSystem.state.showPlaneXMin, m_uiSystem.state.clipXMin, m_uiSystem.state.showPlaneXMax, m_uiSystem.state.clipXMax, m_uiSystem.state.planeColorX,
-            m_uiSystem.state.showPlaneYMin, m_uiSystem.state.clipYMin, m_uiSystem.state.showPlaneYMax, m_uiSystem.state.clipYMax, m_uiSystem.state.planeColorY,
-            m_uiSystem.state.showPlaneZMin, m_uiSystem.state.clipZMin, m_uiSystem.state.showPlaneZMax, m_uiSystem.state.clipZMax, m_uiSystem.state.planeColorZ,
+            showClips && m_uiSystem.state.showPlaneXMin, m_uiSystem.state.clipXMin, showClips && m_uiSystem.state.showPlaneXMax, m_uiSystem.state.clipXMax, m_uiSystem.state.planeColorX,
+            showClips && m_uiSystem.state.showPlaneYMin, m_uiSystem.state.clipYMin, showClips && m_uiSystem.state.showPlaneYMax, m_uiSystem.state.clipYMax, m_uiSystem.state.planeColorY,
+            showClips && m_uiSystem.state.showPlaneZMin, m_uiSystem.state.clipZMin, showClips && m_uiSystem.state.showPlaneZMax, m_uiSystem.state.clipZMax, m_uiSystem.state.planeColorZ,
             glm::vec3(m_masterMinBounds[0], m_masterMinBounds[1], m_masterMinBounds[2]), 
             glm::vec3(m_masterMaxBounds[0], m_masterMaxBounds[1], m_masterMaxBounds[2])
         );
@@ -618,8 +645,6 @@ namespace BimCore {
         scene.clipMin.z = m_uiSystem.state.clipZMin; scene.clipMax.z = m_uiSystem.state.clipZMax;
 
         m_graphics->UpdateScene(scene);
-        
-        // --- FIXED: Completely eliminated the massive loop that was causing the O(N) CPU bottleneck ---
         m_graphics->RenderFrame();
     }
 
