@@ -43,7 +43,7 @@ namespace BimCore {
         return it != str.end();
     }
 
-    void UIMainPanel::Render(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents, float configMaxExplode, bool& triggerFocus, bool& triggerRebuild, Camera* camera) {
+    void UIMainPanel::Render(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents, float configMaxExplode, bool& triggerFocus, bool& triggerRebuild, Camera* camera, CommandHistory& history) {
 
         ImGuizmo::BeginFrame();
 
@@ -263,7 +263,10 @@ namespace BimCore {
         }
 
         ImGui::PopStyleVar();
-        DrawResetModal(state, documents, triggerRebuild);
+        
+        // --- FIXED: Pass history to Reset Modal ---
+        DrawResetModal(state, documents, triggerRebuild, history);
+        
         ImGui::Separator();
 
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.25f, 0.30f, 0.35f, 1.0f));
@@ -285,7 +288,6 @@ namespace BimCore {
         ImGui::PopStyleColor(3);
 
         if (isClippingOpen) {
-            // --- FIXED: Read the true scene bounding box from the state ---
             float bMinX = state.sceneMinBounds[0];
             float bMaxX = state.sceneMaxBounds[0];
             float bMinY = state.sceneMinBounds[1];
@@ -918,6 +920,22 @@ namespace BimCore {
                 ImGuizmo::OPERATION currentOp = (state.activeTool == InteractionTool::Rotate) ? ImGuizmo::ROTATE : ImGuizmo::TRANSLATE;
                 ImGuizmo::MODE      currentMode = (validObjects > 1) ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
 
+                static bool wasUsingGizmo = false;
+                static std::vector<CmdTransform::TransformData> dragData;
+
+                bool isUsingGizmo = ImGuizmo::IsUsing();
+
+                if (isUsingGizmo && !wasUsingGizmo) {
+                    dragData.clear();
+                    for (auto& item : activeItems) {
+                        CmdTransform::TransformData td;
+                        td.doc = item.doc;
+                        td.guid = item.sub->guid;
+                        td.oldTransform = item.doc->GetObjectTransform(item.sub->guid);
+                        dragData.push_back(td);
+                    }
+                }
+
                 bool manipulated = ImGuizmo::Manipulate(
                     glm::value_ptr(viewMatrix),
                     glm::value_ptr(projMatrix),
@@ -934,6 +952,16 @@ namespace BimCore {
                     }
                     state.updateGeometry = true; 
                 }
+
+                if (!isUsingGizmo && wasUsingGizmo && !dragData.empty()) {
+                    for (auto& td : dragData) {
+                        td.newTransform = td.doc->GetObjectTransform(td.guid);
+                    }
+                    history.ExecuteCommand(std::make_unique<CmdTransform>(state, dragData));
+                    dragData.clear();
+                }
+
+                wasUsingGizmo = isUsingGizmo;
             }
         }
     }
@@ -975,15 +1003,22 @@ namespace BimCore {
         state.selectionChanged = true;
     }
 
-    void UIMainPanel::DrawResetModal(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents, bool& triggerRebuild) {
+    void UIMainPanel::DrawResetModal(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents, bool& triggerRebuild, CommandHistory& history) {
         if (ImGui::BeginPopupModal("Reset Model", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("This will reset all items back to original.\nAre you sure?");
+            ImGui::Text("This will roll back all modifications.\nAre you sure?");
             ImGui::Separator();
 
             if (ImGui::Button("OK", ImVec2(120, 0))) {
+
+                // Safely roll back the entire timeline
+                while(history.CanUndo()) {
+                    history.Undo();
+                }
+
                 for (auto& doc : documents) {
                     doc->SetHidden(false); 
-                    doc->ClearTransforms();
+                    
+                    // Manually revert property edits
                     for (auto& [guid, props] : state.originalProperties) {
                         for (auto& [k, v] : props) doc->UpdateElementProperty(guid, k, v);
                     }
@@ -992,13 +1027,23 @@ namespace BimCore {
                 triggerRebuild = true;
 
                 state.explodeFactor = 0.0f;
-                state.updateGeometry = true;
+                state.updateGeometry = true; // This tells EditorApp to recalculate!
+                
+                // --- FIXED: Slam values to infinity so UpdateGeometryOffsets() clamps them to exactly 0% and 100% ---
+                state.clipXMin = -1e9f; state.clipXMax = 1e9f;
+                state.clipYMin = -1e9f; state.clipYMax = 1e9f;
+                state.clipZMin = -1e9f; state.clipZMax = 1e9f;
+
+                // Turn off the visual planes
+                state.showPlaneXMin = false; state.showPlaneXMax = false;
+                state.showPlaneYMin = false; state.showPlaneYMax = false;
+                state.showPlaneZMin = false; state.showPlaneZMax = false;
+
                 memset(state.globalSearchBuf, 0, sizeof(state.globalSearchBuf));
                 memset(state.localSearchBuf, 0, sizeof(state.localSearchBuf));
 
                 state.originalProperties.clear();
                 state.deletedProperties.clear();
-                state.deletedObjects.clear();
                 state.hiddenObjects.clear();
                 state.objects.clear();
                 state.hiddenStateChanged = true;

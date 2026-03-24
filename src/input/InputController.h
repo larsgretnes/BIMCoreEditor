@@ -12,6 +12,7 @@
 #include "scene/Raycaster.h"
 #include "ui/AppUI.h"
 #include "core/EngineConfig.h"
+#include "core/CommandHistory.h"
 
 namespace BimCore {
 
@@ -30,23 +31,25 @@ namespace BimCore {
 
     class InputController {
     public:
-        void Update(Window&                      window,
-                    Camera&                      camera,
-                    std::vector<std::shared_ptr<SceneModel>>& documents,
-                    SelectionState&              selection,
-                    const EngineConfig&          config,
-                    float                        deltaTime,
-                    uint32_t&                    currentLightingMode,
-                    bool&                        triggerFocus);
+        void Update(Window&                                     window,
+                    Camera&                                     camera,
+                    std::vector<std::shared_ptr<SceneModel>>&   documents,
+                    SelectionState&                             selection,
+                    const EngineConfig&                         config,
+                    float                                       deltaTime,
+                    uint32_t&                                   currentLightingMode,
+                    bool&                                       triggerFocus,
+                    CommandHistory&                             history);
 
         bool IsFlightMode() const;
 
     private:
-        void HandleMousePicking(Window&                      window,
-                                Camera&                      camera,
-                                std::vector<std::shared_ptr<SceneModel>>& documents,
-                                SelectionState&              selection,
-                                const EngineConfig&          config);
+        void HandleMousePicking(Window&                                     window,
+                                Camera&                                     camera,
+                                std::vector<std::shared_ptr<SceneModel>>&   documents,
+                                SelectionState&                             selection,
+                                const EngineConfig&                         config,
+                                CommandHistory&                             history);
 
         Ray  ScreenToWorldRay(double           mouseX,
                               double           mouseY,

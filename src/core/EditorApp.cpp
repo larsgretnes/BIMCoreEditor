@@ -141,7 +141,6 @@ namespace BimCore {
             for (int j=0; j<3; ++j) {
                 m_masterMinBounds[j] = minB[j];
                 m_masterMaxBounds[j] = maxB[j];
-                // --- FIXED: Push original bounds to UI ---
                 m_uiSystem.state.sceneMinBounds[j] = minB[j];
                 m_uiSystem.state.sceneMaxBounds[j] = maxB[j];
             }
@@ -200,7 +199,8 @@ namespace BimCore {
             m_uiSystem.NewFrame();
             bool triggerFocus = false;
 
-            m_uiSystem.Render(m_uiSystem.state, *m_graphics, m_documents, *m_camera, m_config.MaxExplodeFactor, triggerFocus, m_input.IsFlightMode(), m_triggerRebuild);
+            // --- FIXED: Pass history to the UI ---
+            m_uiSystem.Render(m_uiSystem.state, *m_graphics, m_documents, *m_camera, m_config.MaxExplodeFactor, triggerFocus, m_input.IsFlightMode(), m_triggerRebuild, &m_commandHistory);
 
             if (m_uiSystem.state.triggerLoad) {
                 m_uiSystem.state.triggerLoad = false;
@@ -269,11 +269,10 @@ namespace BimCore {
             
             if (m_triggerRebuild) RebuildMasterMesh();
             if (m_triggerBatchRebuild) RebuildRenderBatches();
-            
+
             if (m_uiSystem.state.triggerResetCamera && !m_documents.empty()) {
                 m_uiSystem.state.triggerResetCamera = false;
                 
-                // --- FIXED: Reset camera perfectly centers on current transformed bounds ---
                 glm::vec3 globalCenter((m_masterMinBounds[0]+m_masterMaxBounds[0])*0.5f, 
                                        (m_masterMinBounds[1]+m_masterMaxBounds[1])*0.5f, 
                                        (m_masterMinBounds[2]+m_masterMaxBounds[2])*0.5f);
@@ -284,7 +283,8 @@ namespace BimCore {
 
                 m_camera->FocusOn(globalCenter, std::max(1.0f, radius));
             }
-
+            
+            // --- FIXED: Pass history to input ---
             Update(deltaTime, triggerFocus);
             Render();
         }
@@ -346,6 +346,8 @@ namespace BimCore {
 
                 m_uiSystem.state.completedMeasurements.clear();
                 m_uiSystem.state.isMeasuringActive = false;
+                
+                m_commandHistory.Clear(); // Reset undo history on new file
             }
         }
     }
@@ -389,7 +391,8 @@ namespace BimCore {
 
     void EditorApp::Update(float deltaTime, bool& triggerFocus) {
         auto primaryDoc = m_documents.empty() ? nullptr : m_documents[0];
-        m_input.Update(*m_window, *m_camera, m_documents, m_uiSystem.state, m_config, deltaTime, m_currentLightMode, triggerFocus);
+        // --- FIXED: Pass history ---
+        m_input.Update(*m_window, *m_camera, m_documents, m_uiSystem.state, m_config, deltaTime, m_currentLightMode, triggerFocus, m_commandHistory);
         m_camera->Update(deltaTime);
 
         if (m_documents.empty()) return;
@@ -571,8 +574,6 @@ namespace BimCore {
             }
             m_masterMinBounds[j] = newMin[j];
             m_masterMaxBounds[j] = newMax[j];
-
-            // --- FIXED: Push the dynamic transformed bounds to the UI! ---
             m_uiSystem.state.sceneMinBounds[j] = newMin[j];
             m_uiSystem.state.sceneMaxBounds[j] = newMax[j];
         }

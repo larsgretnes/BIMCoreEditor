@@ -14,7 +14,8 @@ namespace BimCore {
         ImGui::NewFrame();
     }
 
-    void AppUI::Render(SelectionState& selection, GraphicsContext& graphics, std::vector<std::shared_ptr<SceneModel>>& documents, Camera& camera, float configMaxExplode, bool& triggerFocus, bool isFlightMode, bool& triggerRebuild) {
+    // --- FIXED: Accept CommandHistory* history ---
+    void AppUI::Render(SelectionState& selection, GraphicsContext& graphics, std::vector<std::shared_ptr<SceneModel>>& documents, Camera& camera, float configMaxExplode, bool& triggerFocus, bool isFlightMode, bool& triggerRebuild, CommandHistory* history) {
 
         m_overlay.RenderFlyMode(isFlightMode);
 
@@ -27,8 +28,8 @@ namespace BimCore {
 
         bool editingActiveAtStartOfFrame = !state.activeEditGuid.empty();
 
-        // --- FIXED: Appended &camera to this call to pass it to the UI ---
-        m_mainPanel.Render(state, documents, configMaxExplode, triggerFocus, triggerRebuild, &camera);
+        // --- FIXED: Pass the history object down to the Main Panel ---
+        m_mainPanel.Render(state, documents, configMaxExplode, triggerFocus, triggerRebuild, &camera, *history);
         
         m_overlay.RenderStatusPanel(state, documents);
         m_propertiesPanel.Render(state, documents, triggerFocus);

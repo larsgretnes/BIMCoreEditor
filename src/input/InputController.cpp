@@ -23,17 +23,36 @@ namespace BimCore {
         const EngineConfig&          config,
         float                        deltaTime,
         uint32_t&                    currentLightingMode,
-        bool&                        triggerFocus)
+        bool&                        triggerFocus,
+        CommandHistory&              history) // --- FIXED: Accept History ---
     {
         bool uiHovered = ImGui::GetIO().WantCaptureMouse || ImGuizmo::IsOver();
         bool uiTyping  = ImGui::GetIO().WantTextInput;
 
+        // --- FIXED: Process Undo/Redo Hotkeys ---
         if (!uiTyping) {
+            bool ctrlPressed = window.IsKeyPressed(GLFW_KEY_LEFT_CONTROL) || window.IsKeyPressed(GLFW_KEY_RIGHT_CONTROL);
+            bool shiftPressed = window.IsKeyPressed(GLFW_KEY_LEFT_SHIFT) || window.IsKeyPressed(GLFW_KEY_RIGHT_SHIFT);
+
+            static bool zWasDown = false;
+            bool zNow = window.IsKeyPressed(GLFW_KEY_Z);
+            if (zNow && !zWasDown && ctrlPressed) {
+                if (shiftPressed) history.Redo();
+                else history.Undo();
+            }
+            zWasDown = zNow;
+
+            static bool yWasDown = false;
+            bool yNow = window.IsKeyPressed(GLFW_KEY_Y);
+            if (yNow && !yWasDown && ctrlPressed) {
+                history.Redo();
+            }
+            yWasDown = yNow;
+
             const bool uiNow = window.IsKeyPressed(config.KeyToggleUI);
             if (uiNow && !m_uiWasDown) selection.showUI = !selection.showUI;
             m_uiWasDown = uiNow;
 
-            // --- FIXED: Map keys 1, 2, 3 to the new tools ---
             if (window.IsKeyPressed(config.KeyToolSelect)) selection.activeTool = InteractionTool::Select;
             if (window.IsKeyPressed(config.KeyToolPan))    selection.activeTool = InteractionTool::Move;
             if (window.IsKeyPressed(config.KeyToolOrbit))  selection.activeTool = InteractionTool::Rotate;
@@ -80,14 +99,12 @@ namespace BimCore {
             }
             m_hWasDown = hNow;
 
+            // --- FIXED: Push Deletes to the Command History ---
             const bool delNow = window.IsKeyPressed(config.KeyDelete);
             if (delNow && !m_delWasDown && !selection.objects.empty()) {
-                for (auto& obj : selection.objects) {
-                    selection.deletedObjects.insert(obj.guid);
-                    selection.hiddenObjects.insert(obj.guid);
-                }
-                selection.objects.clear();
-                selection.hiddenStateChanged = true;
+                std::vector<std::string> toDelete;
+                for (auto& obj : selection.objects) toDelete.push_back(obj.guid);
+                history.ExecuteCommand(std::make_unique<CmdDelete>(selection, toDelete));
             }
             m_delWasDown = delNow;
 
@@ -131,7 +148,6 @@ namespace BimCore {
                 if (window.IsKeyPressed(GLFW_KEY_RIGHT)) camera.ProcessOrbit(keyboardOrbitSpeed, 0.0f);
             }
 
-            // --- FIXED: Pure MMB/RMB Camera Navigation ---
             if (!uiHovered) {
                 bool mmbPan   = window.IsMouseButtonPressed(config.CadPanButton) && !window.IsKeyPressed(config.CadOrbitModifier);
                 bool mmbOrbit = window.IsMouseButtonPressed(config.CadPanButton) && window.IsKeyPressed(config.CadOrbitModifier);
@@ -221,9 +237,8 @@ namespace BimCore {
 
                 m_mouseWasDown = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
 
-            // --- FIXED: Always allow raycast selection unless we are hovering the UI/Gizmo! ---
             } else if (!uiHovered && !documents.empty()) {
-                HandleMousePicking(window, camera, documents, selection, config);
+                HandleMousePicking(window, camera, documents, selection, config, history);
             } else {
                 m_mouseWasDown = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
             }
@@ -233,7 +248,7 @@ namespace BimCore {
         }
     }
 
-    void InputController::HandleMousePicking(Window& window, Camera& camera, std::vector<std::shared_ptr<SceneModel>>& documents, SelectionState& selection, const EngineConfig& config) {
+    void InputController::HandleMousePicking(Window& window, Camera& camera, std::vector<std::shared_ptr<SceneModel>>& documents, SelectionState& selection, const EngineConfig& config, CommandHistory& history) {
         bool mouseDown = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
         if (mouseDown && !m_mouseWasDown) {
             double mx, my;

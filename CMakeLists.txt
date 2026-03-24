@@ -151,6 +151,7 @@ set(APP_SOURCES
     src/core/main.cpp
     src/core/EditorApp.cpp
     src/core/EngineConfig.cpp
+    src/core/CommandHistory.cpp
     src/ui/AppUI.cpp
     src/ui/UIMainPanel.cpp
     src/ui/UIPropertiesPanel.cpp

@@ -11,6 +11,7 @@
 
 #include "core/Core.h"
 #include "core/EngineConfig.h"
+#include "core/CommandHistory.h"
 #include "platform/Window.h"
 #include "graphics/GraphicsContext.h"
 #include "graphics/Camera.h"
@@ -47,7 +48,8 @@ namespace BimCore {
         std::unique_ptr<Window>             m_window;
         std::unique_ptr<GraphicsContext>    m_graphics;
         std::unique_ptr<Camera>             m_camera;
-
+        
+        CommandHistory                      m_commandHistory;
         AppUI                               m_uiSystem;
         InputController                     m_input;
 
