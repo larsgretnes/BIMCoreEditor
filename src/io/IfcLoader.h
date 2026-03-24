@@ -43,7 +43,7 @@ class IfcLoader {
 public:
     static std::shared_ptr<SceneModel> LoadDocument(
         const std::string& filepath,
-        LoadState*         state = nullptr);
+        LoadState* state = nullptr);
 };
 
 } // namespace BimCore
