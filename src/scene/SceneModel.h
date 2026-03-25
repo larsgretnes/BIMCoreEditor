@@ -11,7 +11,7 @@
 #include <glm/glm.hpp>
 #include <ifcparse/IfcFile.h>
 
-#include "graphics/GraphicsContext.h"
+#include "graphics/GraphicsContext.h" // <--- This provides Vertex and TextureData now!
 
 namespace BimCore {
 
@@ -22,12 +22,11 @@ namespace BimCore {
         bool isDeleted = false;
     };
 
-    struct TextureData {
-        uint32_t width;
-        uint32_t height;
-        uint32_t channels;
-        std::vector<uint8_t> pixels;
-        std::string name;
+    struct BVHNode {
+        float aabbMin[3] = { 1e9f,  1e9f,  1e9f};
+        float aabbMax[3] = {-1e9f, -1e9f, -1e9f};
+        uint32_t leftFirst = 0; 
+        uint32_t triCount  = 0; 
     };
 
     struct RenderSubMesh {
@@ -39,6 +38,8 @@ namespace BimCore {
         bool        isTransparent = false;
         int         textureIndex = -1;
 
+        uint32_t    bvhRootIndex = 0;
+
         uint32_t    globalStartIndex = 0;
         int         globalTextureIndex = -1;
     };
@@ -48,6 +49,7 @@ namespace BimCore {
         std::vector<uint32_t>      indices;
         std::vector<RenderSubMesh> subMeshes;
         std::vector<TextureData>   textures; 
+        std::vector<BVHNode>       bvhNodes;
 
         std::vector<Vertex>        originalVertices;
 
@@ -69,7 +71,6 @@ namespace BimCore {
         std::shared_ptr<IfcParse::IfcFile>     GetDatabase();
         std::string                            GetFilePath() const;
 
-        // --- FIXED: Per-Object Matrix Transform Storage ---
         glm::mat4 GetObjectTransform(const std::string& guid) const {
             auto it = m_objectTransforms.find(guid);
             return it != m_objectTransforms.end() ? it->second : glm::mat4(1.0f);

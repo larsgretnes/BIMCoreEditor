@@ -2,14 +2,30 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug BIMCoreEditor (Clang-CL)",
+            "name": "Launch BIMCoreEditor (Linux GDB)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/dist/BIMCoreEditor",
+            "args": [],
+            "cwd": "${workspaceFolder}/dist",
+            "MIMode": "gdb",
+            "miDebuggerPath": "/usr/bin/gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "CMake: build"
+        },
+        {
+            "name": "Launch BIMCoreEditor (Windows Clang-CL)",
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${workspaceFolder}/dist/BIMCoreEditor.exe",
             "args": [],
-            "stopAtEntry": false,
             "cwd": "${workspaceFolder}/dist",
-            "environment": [],
             "console": "integratedTerminal",
             "preLaunchTask": "CMake: build"
         }

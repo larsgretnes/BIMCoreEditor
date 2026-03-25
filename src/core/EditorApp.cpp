@@ -8,9 +8,7 @@
 #include <algorithm>
 #include <thread>
 #include <fstream>
-#include <map>
 #include <filesystem>
-#include <execution> // Required for parallel vector math
 
 #include "io/IfcExporter.h"
 #include "io/CsvImporter.h"
@@ -20,28 +18,6 @@
 #include "platform/portable-file-dialogs.h"
 
 namespace BimCore {
-
-    struct SelectionBounds {
-        glm::vec3 min { kFloatMax, kFloatMax, kFloatMax };
-        glm::vec3 max { kFloatMin, kFloatMin, kFloatMin };
-        bool      valid = false;
-    };
-
-    static SelectionBounds ComputeSelectionBounds(const std::vector<SelectedObject>& objects, const std::vector<Vertex>& masterVerts, const std::vector<uint32_t>& masterIndices) {
-        SelectionBounds b;
-        for (const auto& obj : objects) {
-            for (uint32_t i = 0; i < obj.indexCount; ++i) {
-                const uint32_t vi = masterIndices[obj.startIndex + i];
-                const float* p  = masterVerts[vi].position;
-                for (int j=0; j<3; ++j) {
-                    if (p[j] < b.min[j]) b.min[j] = p[j];
-                    if (p[j] > b.max[j]) b.max[j] = p[j];
-                }
-                b.valid = true;
-            }
-        }
-        return b;
-    }
 
     bool EditorApp::Initialize() {
         m_config.Load();
@@ -96,115 +72,6 @@ namespace BimCore {
         return true;
     }
 
-    void EditorApp::RebuildMasterMesh() {
-        m_masterVertices.clear();
-        m_masterIndices.clear();
-        std::vector<TextureData> masterTextures;
-
-        // OPTIMIZATION 1: Pre-calculate total sizes to prevent massive heap reallocations
-        size_t totalVertices = 0;
-        size_t totalIndices = 0;
-        size_t totalTextures = 0;
-        for (const auto& doc : m_documents) {
-            totalVertices += doc->GetGeometry().vertices.size();
-            totalIndices += doc->GetGeometry().indices.size();
-            totalTextures += doc->GetGeometry().textures.size();
-        }
-
-        // Allocate the memory exactly once.
-        m_masterVertices.reserve(totalVertices);
-        m_masterIndices.reserve(totalIndices);
-        masterTextures.reserve(totalTextures);
-
-        uint32_t vOffset = 0;
-        uint32_t iOffset = 0;
-        int tOffset = 0;
-
-        float minB[3] = { kFloatMax, kFloatMax, kFloatMax };
-        float maxB[3] = { kFloatMin, kFloatMin, kFloatMin };
-        bool hasBounds = false;
-
-        for (auto& doc : m_documents) {
-            auto& geom = doc->GetGeometry();
-            
-            // Fast block copy of vertices
-            m_masterVertices.insert(m_masterVertices.end(), geom.vertices.begin(), geom.vertices.end());
-            
-            // OPTIMIZATION 2: Parallelized offset calculation instead of sequential push_back
-            size_t currentIdxStart = m_masterIndices.size();
-            m_masterIndices.resize(currentIdxStart + geom.indices.size());
-            std::transform(std::execution::par_unseq, 
-                           geom.indices.begin(), geom.indices.end(), 
-                           m_masterIndices.begin() + currentIdxStart, 
-                           [vOffset](uint32_t idx) { return idx + vOffset; });
-
-            masterTextures.insert(masterTextures.end(), geom.textures.begin(), geom.textures.end());
-
-            for (auto& sub : geom.subMeshes) {
-                sub.globalStartIndex = sub.startIndex + iOffset;
-                sub.globalTextureIndex = sub.textureIndex >= 0 ? sub.textureIndex + tOffset : -1;
-            }
-
-            for (int j=0; j<3; ++j) {
-                if (geom.minBounds[j] < minB[j]) minB[j] = geom.minBounds[j];
-                if (geom.maxBounds[j] > maxB[j]) maxB[j] = geom.maxBounds[j];
-            }
-            hasBounds = true;
-
-            vOffset += static_cast<uint32_t>(geom.vertices.size());
-            iOffset += static_cast<uint32_t>(geom.indices.size());
-            tOffset += static_cast<int>(geom.textures.size());
-        }
-
-        m_graphics->UploadMesh(m_masterVertices, m_masterIndices);
-        m_graphics->UploadTextures(masterTextures);
-
-        if (hasBounds) {
-            m_uiSystem.state.clipXMin = minB[0] - 0.1f; m_uiSystem.state.clipXMax = maxB[0] + 0.1f;
-            m_uiSystem.state.clipYMin = minB[1] - 0.1f; m_uiSystem.state.clipYMax = maxB[1] + 0.1f;
-            m_uiSystem.state.clipZMin = minB[2] - 0.1f; m_uiSystem.state.clipZMax = maxB[2] + 0.1f;
-            for (int j=0; j<3; ++j) {
-                m_masterMinBounds[j] = minB[j];
-                m_masterMaxBounds[j] = maxB[j];
-                m_uiSystem.state.sceneMinBounds[j] = minB[j];
-                m_uiSystem.state.sceneMaxBounds[j] = maxB[j];
-            }
-        }
-
-        // OPTIMIZATION 3: Kill the Double-Generation Bug
-        // We just cleanly built the master mesh. We DO NOT want UpdateGeometryOffsets 
-        // destroying and recreating it on the very next frame!
-        m_uiSystem.state.updateGeometry = false; 
-        
-        m_triggerRebuild = false;
-        m_triggerBatchRebuild = true;
-    }
-
-    void EditorApp::RebuildRenderBatches() {
-        m_cachedSolidBatches.clear();
-        m_cachedTransBatches.clear();
-
-        for (auto& doc : m_documents) {
-            if (doc->IsHidden()) continue;
-
-            for (const auto& sub : doc->GetGeometry().subMeshes) {
-                if (m_uiSystem.state.hiddenObjects.count(sub.guid)) continue;
-                if (!m_uiSystem.state.showOpeningsAndSpaces && (sub.type == "IfcOpeningElement" || sub.type == "IfcSpace")) continue;
-
-                auto& targetMap = sub.isTransparent ? m_cachedTransBatches : m_cachedSolidBatches;
-                auto& targetVec = targetMap[sub.globalTextureIndex];
-                
-                targetVec.reserve(targetVec.size() + sub.indexCount);
-                for (uint32_t i=0; i<sub.indexCount; ++i) {
-                    targetVec.push_back(m_masterIndices[sub.globalStartIndex + i]);
-                }
-            }
-        }
-        
-        m_graphics->UpdateActiveBatches(m_cachedSolidBatches, m_cachedTransBatches);
-        m_triggerBatchRebuild = false;
-    }
-
     void EditorApp::Run() {
         while (!m_window->ShouldClose()) {
             double now = glfwGetTime();
@@ -221,18 +88,18 @@ namespace BimCore {
             HandleAsyncTasks();
 
             if (m_uiSystem.state.hiddenStateChanged) {
-                m_triggerBatchRebuild = true;
+                m_sceneContext.triggerBatchRebuild = true;
                 m_uiSystem.state.hiddenStateChanged = false;
             }
 
             m_uiSystem.NewFrame();
             bool triggerFocus = false;
 
-            m_uiSystem.Render(m_uiSystem.state, *m_graphics, m_documents, *m_camera, m_config.MaxExplodeFactor, triggerFocus, m_input.IsFlightMode(), m_triggerRebuild, &m_commandHistory);
+            m_uiSystem.Render(m_uiSystem.state, *m_graphics, m_sceneContext.GetDocuments(), *m_camera, m_config.MaxExplodeFactor, triggerFocus, m_input.IsFlightMode(), m_sceneContext.triggerRebuild, &m_commandHistory);
 
             if (m_uiSystem.state.triggerLoad) {
                 m_uiSystem.state.triggerLoad = false;
-                auto fileDialog = pfd::open_file("Select IFC", m_currentFileDirectory, { "IFC Files", "*.ifc" });
+                auto fileDialog = pfd::open_file("Select File", m_currentFileDirectory, { "Supported Files", "*.ifc *.gltf *.glb" });
                 auto files = fileDialog.result();
                 if (!files.empty()) {
                     std::lock_guard<std::mutex> lock(m_loadMutex);
@@ -248,7 +115,6 @@ namespace BimCore {
                 std::string title;
                 if (type == 1) { title = "Import CSV"; filters = { "CSV Files", "*.csv" }; }
                 else if (type == 2) { title = "Import BCF"; filters = { "BCF Zip Files", "*.bcf", "BCF XML Files", "*.bcfxml" }; }
-                else if (type == 3) { title = "Import glTF"; filters = { "glTF Models", "*.gltf *.glb" }; }
 
                 auto fileDialog = pfd::open_file(title, m_currentFileDirectory, filters);
                 auto files = fileDialog.result();
@@ -258,7 +124,7 @@ namespace BimCore {
                         auto foundGuids = CsvImporter::ExtractGuids(files[0]);
                         if (!foundGuids.empty()) {
                             m_uiSystem.state.objects.clear();
-                            for (auto& doc : m_documents) {
+                            for (auto& doc : m_sceneContext.GetDocuments()) {
                                 for (const auto& sub : doc->GetGeometry().subMeshes) {
                                     if (foundGuids.count(sub.guid)) {
                                         SelectedObject so; so.guid = sub.guid; so.type = sub.type; so.startIndex = sub.globalStartIndex; so.indexCount = sub.indexCount; so.properties = doc->GetElementProperties(sub.guid);
@@ -268,15 +134,8 @@ namespace BimCore {
                             }
                             if (!m_uiSystem.state.objects.empty()) m_uiSystem.state.selectionChanged = true;
                         }
-                    } else if (type == 2 && !m_documents.empty()) {
-                        BcfImporter::Import(files[0], m_documents[0]);
-                    } else if (type == 3) {
-                        RenderMesh emptyMesh;
-                        auto newGltfDoc = std::make_shared<SceneModel>(nullptr, emptyMesh, files[0]);
-                        GltfImporter::Import(files[0], newGltfDoc);
-                        m_documents.push_back(newGltfDoc);
-                        m_triggerRebuild = true;
-                        m_uiSystem.state.triggerResetCamera = true;
+                    } else if (type == 2 && !m_sceneContext.GetDocuments().empty()) {
+                        BcfImporter::Import(files[0], m_sceneContext.GetDocuments()[0]);
                     }
                 }
             }
@@ -285,28 +144,28 @@ namespace BimCore {
                 int type = m_uiSystem.state.triggerExport;
                 m_uiSystem.state.triggerExport = 0;
 
-                if (type == 1 && !m_documents.empty()) {
+                if (type == 1 && !m_sceneContext.GetDocuments().empty()) {
                     std::string defaultName = m_currentFileDirectory + "ModelExport.glb";
                     auto saveDialog = pfd::save_file("Export as glTF", defaultName, { "glTF Binary", "*.glb", "glTF JSON", "*.gltf" });
                     std::string path = saveDialog.result();
-                    if (!path.empty()) GltfExporter::Export(path, m_documents[0]);
+                    if (!path.empty()) GltfExporter::Export(path, m_sceneContext.GetDocuments()[0]);
                 }
             }
 
             HandleSaveTask();
             
-            if (m_triggerRebuild) RebuildMasterMesh();
-            if (m_triggerBatchRebuild) RebuildRenderBatches();
+            if (m_sceneContext.triggerRebuild) m_sceneContext.RebuildMasterMesh(m_graphics.get(), m_uiSystem.state);
+            if (m_sceneContext.triggerBatchRebuild) m_sceneContext.RebuildRenderBatches(m_graphics.get(), m_uiSystem.state);
 
-            if (m_uiSystem.state.triggerResetCamera && !m_documents.empty()) {
+            if (m_uiSystem.state.triggerResetCamera && !m_sceneContext.GetDocuments().empty()) {
                 m_uiSystem.state.triggerResetCamera = false;
                 
-                glm::vec3 globalCenter((m_masterMinBounds[0]+m_masterMaxBounds[0])*0.5f, 
-                                       (m_masterMinBounds[1]+m_masterMaxBounds[1])*0.5f, 
-                                       (m_masterMinBounds[2]+m_masterMaxBounds[2])*0.5f);
-                glm::vec3 extents(m_masterMaxBounds[0] - m_masterMinBounds[0], 
-                                  m_masterMaxBounds[1] - m_masterMinBounds[1], 
-                                  m_masterMaxBounds[2] - m_masterMinBounds[2]);
+                glm::vec3 globalCenter((m_sceneContext.minBounds[0]+m_sceneContext.maxBounds[0])*0.5f, 
+                                       (m_sceneContext.minBounds[1]+m_sceneContext.maxBounds[1])*0.5f, 
+                                       (m_sceneContext.minBounds[2]+m_sceneContext.maxBounds[2])*0.5f);
+                glm::vec3 extents(m_sceneContext.maxBounds[0] - m_sceneContext.minBounds[0], 
+                                  m_sceneContext.maxBounds[1] - m_sceneContext.minBounds[1], 
+                                  m_sceneContext.maxBounds[2] - m_sceneContext.minBounds[2]);
                 float radius = glm::length(extents) * 0.5f;
 
                 m_camera->FocusOn(globalCenter, std::max(1.0f, radius));
@@ -335,21 +194,32 @@ namespace BimCore {
             m_currentFilename = (pos != std::string::npos) ? triggerPath.substr(pos + 1) : triggerPath;
             m_currentFileDirectory = (pos != std::string::npos) ? triggerPath.substr(0, pos + 1) : "";
 
-            std::thread([this, triggerPath]() {
-                auto doc = IfcLoader::LoadDocument(triggerPath, &m_globalLoadState);
+            std::string ext = triggerPath.substr(triggerPath.find_last_of(".") + 1);
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+            if (ext == "gltf" || ext == "glb") {
+                RenderMesh emptyMesh;
+                auto newGltfDoc = std::make_shared<SceneModel>(nullptr, emptyMesh, triggerPath);
+                GltfImporter::Import(triggerPath, newGltfDoc);
                 std::lock_guard<std::mutex> lock(m_docMutex);
-                m_pendingDoc = doc;
-            }).detach();
+                m_pendingDoc = newGltfDoc;
+            } else {
+                std::thread([this, triggerPath]() {
+                    auto doc = IfcLoader::LoadDocument(triggerPath, &m_globalLoadState);
+                    std::lock_guard<std::mutex> lock(m_docMutex);
+                    m_pendingDoc = doc;
+                }).detach();
+            }
         }
 
         {
             std::lock_guard<std::mutex> lock(m_docMutex);
             if (m_pendingDoc) {
-                m_documents.push_back(m_pendingDoc);
+                m_sceneContext.AddDocument(m_pendingDoc);
                 m_pendingDoc = nullptr;
                 
                 m_globalLoadState.isLoaded.store(true);
-                m_triggerRebuild = true;
+                m_sceneContext.triggerRebuild = true;
                 m_uiSystem.state.triggerResetCamera = true;
 
                 std::string title = m_config.AppName + " v" + m_config.AppVersion + " - " + m_currentFilename;
@@ -380,7 +250,7 @@ namespace BimCore {
     }
 
     void EditorApp::HandleSaveTask() {
-        if (!m_uiSystem.state.triggerSave || m_documents.empty()) return;
+        if (!m_uiSystem.state.triggerSave || m_sceneContext.GetDocuments().empty()) return;
 
         m_uiSystem.state.triggerSave = false;
 
@@ -390,13 +260,13 @@ namespace BimCore {
 
         if (!savePath.empty()) {
             for (const auto& guid : m_uiSystem.state.deletedObjects) {
-                for (auto& doc : m_documents) doc->DeleteElement(guid);
+                for (auto& doc : m_sceneContext.GetDocuments()) doc->DeleteElement(guid);
                 m_uiSystem.state.hiddenObjects.erase(guid);
             }
 
-            for (auto& doc : m_documents) doc->CommitASTChanges();
+            for (auto& doc : m_sceneContext.GetDocuments()) doc->CommitASTChanges();
 
-            std::thread([this, savePath, doc = m_documents[0]]() {
+            std::thread([this, savePath, doc = m_sceneContext.GetDocuments()[0]]() {
                 bool success = IfcExporter::ExportIFC(doc, savePath, &m_globalLoadState);
                 if (success) std::cout << "[BIMCore] File saved successfully to " << savePath << "\n";
             }).detach();
@@ -417,16 +287,15 @@ namespace BimCore {
     }
 
     void EditorApp::Update(float deltaTime, bool& triggerFocus) {
-        auto primaryDoc = m_documents.empty() ? nullptr : m_documents[0];
+        auto primaryDoc = m_sceneContext.GetDocuments().empty() ? nullptr : m_sceneContext.GetDocuments()[0];
         
-        m_input.Update(*m_window, *m_camera, m_documents, m_uiSystem.state, m_config, deltaTime, m_currentLightMode, triggerFocus, m_commandHistory);
+        m_input.Update(*m_window, *m_camera, m_sceneContext.GetDocuments(), m_uiSystem.state, m_config, deltaTime, m_currentLightMode, triggerFocus, m_commandHistory);
         m_camera->Update(deltaTime);
 
-        if (m_documents.empty()) return;
+        if (m_sceneContext.GetDocuments().empty()) return;
 
         if (triggerFocus && !m_uiSystem.state.objects.empty()) {
-            auto b = ComputeSelectionBounds(m_uiSystem.state.objects, m_masterVertices, m_masterIndices);
-            
+            auto b = m_sceneContext.ComputeSelectionBounds(m_uiSystem.state.objects);
             if (b.valid) {
                 glm::vec3 extents(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
                 float radius = glm::length(extents) * 0.5f;
@@ -434,7 +303,7 @@ namespace BimCore {
             }
         }
 
-        UpdateGeometryOffsets();
+        m_sceneContext.UpdateGeometryOffsets(m_graphics.get(), m_uiSystem.state, m_uiSystem.state.explodeFactor);
 
         m_uiSystem.state.renderMeasurements.clear();
         m_uiSystem.state.drawActiveLine = false;
@@ -486,145 +355,8 @@ namespace BimCore {
         }
     }
 
-    void EditorApp::UpdateGeometryOffsets() {
-        if (!m_uiSystem.state.updateGeometry) return;
-
-        float oldMin[3] = { kFloatMax, kFloatMax, kFloatMax };
-        float oldMax[3] = { kFloatMin, kFloatMin, kFloatMin };
-        
-        if (!m_masterVertices.empty()) {
-            for (const auto& v : m_masterVertices) {
-                for (int j=0; j<3; ++j) {
-                    if (v.position[j] < oldMin[j]) oldMin[j] = v.position[j];
-                    if (v.position[j] > oldMax[j]) oldMax[j] = v.position[j];
-                }
-            }
-        } else {
-            for (auto& doc : m_documents) {
-                auto& geom = doc->GetGeometry();
-                for (int j=0; j<3; ++j) {
-                    if (geom.minBounds[j] < oldMin[j]) oldMin[j] = geom.minBounds[j];
-                    if (geom.maxBounds[j] > oldMax[j]) oldMax[j] = geom.maxBounds[j];
-                }
-            }
-        }
-
-        for (int j=0; j<3; ++j) {
-            oldMin[j] -= 0.1f; 
-            oldMax[j] += 0.1f;
-            if (oldMax[j] - oldMin[j] < 0.0001f) {
-                oldMin[j] -= 0.1f; oldMax[j] += 0.1f;
-            }
-        }
-
-        float pctXMin = std::clamp((m_uiSystem.state.clipXMin - oldMin[0]) / (oldMax[0] - oldMin[0]), 0.0f, 1.0f);
-        float pctXMax = std::clamp((m_uiSystem.state.clipXMax - oldMin[0]) / (oldMax[0] - oldMin[0]), 0.0f, 1.0f);
-        float pctYMin = std::clamp((m_uiSystem.state.clipYMin - oldMin[1]) / (oldMax[1] - oldMin[1]), 0.0f, 1.0f);
-        float pctYMax = std::clamp((m_uiSystem.state.clipYMax - oldMin[1]) / (oldMax[1] - oldMin[1]), 0.0f, 1.0f);
-        float pctZMin = std::clamp((m_uiSystem.state.clipZMin - oldMin[2]) / (oldMax[2] - oldMin[2]), 0.0f, 1.0f);
-        float pctZMax = std::clamp((m_uiSystem.state.clipZMax - oldMin[2]) / (oldMax[2] - oldMin[2]), 0.0f, 1.0f);
-
-        float origMin[3] = { kFloatMax, kFloatMax, kFloatMax };
-        float origMax[3] = { kFloatMin, kFloatMin, kFloatMin };
-        for (auto& doc : m_documents) {
-            auto& geom = doc->GetGeometry();
-            for (int j=0; j<3; ++j) {
-                if (geom.minBounds[j] < origMin[j]) origMin[j] = geom.minBounds[j];
-                if (geom.maxBounds[j] > origMax[j]) origMax[j] = geom.maxBounds[j];
-            }
-        }
-        glm::vec3 globalCenter((origMin[0]+origMax[0])*0.5f, (origMin[1]+origMax[1])*0.5f, (origMin[2]+origMax[2])*0.5f);
-
-        // OPTIMIZATION 4: Pre-allocate space for geometry offset loop
-        size_t totalVertices = 0;
-        for (const auto& doc : m_documents) {
-            totalVertices += doc->GetGeometry().vertices.size();
-        }
-        m_masterVertices.clear();
-        m_masterVertices.reserve(totalVertices);
-        
-        float newMin[3] = { kFloatMax, kFloatMax, kFloatMax };
-        float newMax[3] = { kFloatMin, kFloatMin, kFloatMin };
-
-        for (auto& doc : m_documents) {
-            auto& geom = doc->GetGeometry();
-            geom.vertices = geom.originalVertices;
-
-            std::vector<bool> shifted(geom.vertices.size(), false);
-
-            for (const auto& sub : geom.subMeshes) {
-                glm::vec3 subCenter(sub.center[0], sub.center[1], sub.center[2]);
-                glm::vec3 dir = subCenter - globalCenter;
-                glm::vec3 explodeOffset = dir * m_uiSystem.state.explodeFactor;
-
-                glm::mat4 objMat = doc->GetObjectTransform(sub.guid);
-                bool hasTransform = (objMat != glm::mat4(1.0f));
-                glm::mat3 normalMat = glm::transpose(glm::inverse(glm::mat3(objMat)));
-
-                if (m_uiSystem.state.explodeFactor > 0.01f || hasTransform) {
-                    for (uint32_t i = 0; i < sub.indexCount; ++i) {
-                        uint32_t vIdx = geom.indices[sub.startIndex + i];
-                        if (!shifted[vIdx]) {
-                            
-                            if (hasTransform) {
-                                glm::vec4 p = objMat * glm::vec4(geom.vertices[vIdx].position[0], geom.vertices[vIdx].position[1], geom.vertices[vIdx].position[2], 1.0f);
-                                geom.vertices[vIdx].position[0] = p.x; 
-                                geom.vertices[vIdx].position[1] = p.y; 
-                                geom.vertices[vIdx].position[2] = p.z;
-                                
-                                glm::vec3 n = normalMat * glm::vec3(geom.vertices[vIdx].normal[0], geom.vertices[vIdx].normal[1], geom.vertices[vIdx].normal[2]);
-                                if (glm::length(n) > 0.0001f) n = glm::normalize(n);
-                                geom.vertices[vIdx].normal[0] = n.x; 
-                                geom.vertices[vIdx].normal[1] = n.y; 
-                                geom.vertices[vIdx].normal[2] = n.z;
-                            }
-
-                            if (m_uiSystem.state.explodeFactor > 0.01f) {
-                                geom.vertices[vIdx].position[0] += explodeOffset.x;
-                                geom.vertices[vIdx].position[1] += explodeOffset.y;
-                                geom.vertices[vIdx].position[2] += explodeOffset.z;
-                            }
-
-                            shifted[vIdx] = true;
-                        }
-                    }
-                }
-            }
-            
-            for (const auto& v : geom.vertices) {
-                for(int j=0; j<3; ++j) {
-                    if (v.position[j] < newMin[j]) newMin[j] = v.position[j];
-                    if (v.position[j] > newMax[j]) newMax[j] = v.position[j];
-                }
-            }
-            m_masterVertices.insert(m_masterVertices.end(), geom.vertices.begin(), geom.vertices.end());
-        }
-
-        for (int j=0; j<3; ++j) {
-            newMin[j] -= 0.1f; 
-            newMax[j] += 0.1f;
-            if (newMax[j] - newMin[j] < 0.0001f) {
-                newMin[j] -= 0.1f; newMax[j] += 0.1f;
-            }
-            m_masterMinBounds[j] = newMin[j];
-            m_masterMaxBounds[j] = newMax[j];
-            m_uiSystem.state.sceneMinBounds[j] = newMin[j];
-            m_uiSystem.state.sceneMaxBounds[j] = newMax[j];
-        }
-
-        m_uiSystem.state.clipXMin = newMin[0] + pctXMin * (newMax[0] - newMin[0]);
-        m_uiSystem.state.clipXMax = newMin[0] + pctXMax * (newMax[0] - newMin[0]);
-        m_uiSystem.state.clipYMin = newMin[1] + pctYMin * (newMax[1] - newMin[1]);
-        m_uiSystem.state.clipYMax = newMin[1] + pctYMax * (newMax[1] - newMin[1]);
-        m_uiSystem.state.clipZMin = newMin[2] + pctZMin * (newMax[2] - newMin[2]);
-        m_uiSystem.state.clipZMax = newMin[2] + pctZMax * (newMax[2] - newMin[2]);
-
-        m_graphics->UpdateGeometry(m_masterVertices);
-        m_uiSystem.state.updateGeometry = false;
-    }
-
     void EditorApp::Render() {
-        if (m_documents.empty()) {
+        if (m_sceneContext.GetDocuments().empty()) {
             SceneUniforms defaultScene{};
             defaultScene.viewProjection = m_camera->GetViewProjectionMatrix();
             defaultScene.invViewProjection = glm::inverse(defaultScene.viewProjection);
@@ -636,7 +368,7 @@ namespace BimCore {
         }
 
         if (m_uiSystem.state.showBoundingBox && !m_uiSystem.state.objects.empty()) {
-            auto b = ComputeSelectionBounds(m_uiSystem.state.objects, m_masterVertices, m_masterIndices);
+            auto b = m_sceneContext.ComputeSelectionBounds(m_uiSystem.state.objects);
             if (b.valid) m_graphics->SetBoundingBox(true, b.min, b.max);
         } else {
             m_graphics->SetBoundingBox(false, glm::vec3(0), glm::vec3(0));
@@ -656,21 +388,29 @@ namespace BimCore {
             showClips && m_uiSystem.state.showPlaneXMin, m_uiSystem.state.clipXMin, showClips && m_uiSystem.state.showPlaneXMax, m_uiSystem.state.clipXMax, m_uiSystem.state.planeColorX,
             showClips && m_uiSystem.state.showPlaneYMin, m_uiSystem.state.clipYMin, showClips && m_uiSystem.state.showPlaneYMax, m_uiSystem.state.clipYMax, m_uiSystem.state.planeColorY,
             showClips && m_uiSystem.state.showPlaneZMin, m_uiSystem.state.clipZMin, showClips && m_uiSystem.state.showPlaneZMax, m_uiSystem.state.clipZMax, m_uiSystem.state.planeColorZ,
-            glm::vec3(m_masterMinBounds[0], m_masterMinBounds[1], m_masterMinBounds[2]), 
-            glm::vec3(m_masterMaxBounds[0], m_masterMaxBounds[1], m_masterMaxBounds[2])
+            glm::vec3(m_sceneContext.minBounds[0], m_sceneContext.minBounds[1], m_sceneContext.minBounds[2]), 
+            glm::vec3(m_sceneContext.maxBounds[0], m_sceneContext.maxBounds[1], m_sceneContext.maxBounds[2])
         );
 
         SceneUniforms scene{};
         scene.viewProjection = m_camera->GetViewProjectionMatrix();
-
         scene.invViewProjection = glm::inverse(scene.viewProjection);
         scene.screenWidth = m_window->GetWidth();
         scene.screenHeight = m_window->GetHeight();
-
         scene.lightingMode = m_currentLightMode;
         scene.highlightColor = m_uiSystem.state.color;
+        scene.sunDirection = glm::vec4(glm::normalize(glm::vec3(0.5f, 0.8f, 0.3f)), 0.0f);
 
-        scene.sunDirection = glm::vec4(normalize(glm::vec3(0.5f, 0.8f, 0.3f)), 0.0f);
+        glm::vec3 globalCenter((m_sceneContext.minBounds[0] + m_sceneContext.maxBounds[0]) * 0.5f, 
+                               (m_sceneContext.minBounds[1] + m_sceneContext.maxBounds[1]) * 0.5f, 
+                               (m_sceneContext.minBounds[2] + m_sceneContext.maxBounds[2]) * 0.5f);
+        float radius = glm::length(glm::vec3(m_sceneContext.maxBounds[0] - m_sceneContext.minBounds[0], 
+                                             m_sceneContext.maxBounds[1] - m_sceneContext.minBounds[1], 
+                                             m_sceneContext.maxBounds[2] - m_sceneContext.minBounds[2])) * 0.5f;
+        glm::vec3 lightDir = glm::vec3(scene.sunDirection);
+        glm::mat4 lightView = glm::lookAt(globalCenter + lightDir * radius, globalCenter, glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::mat4 lightProj = glm::ortho(-radius, radius, -radius, radius, 0.1f, radius * 2.0f);
+        scene.lightSpaceMatrix = lightProj * lightView;
 
         scene.clipActiveMin = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
         scene.clipActiveMax = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);

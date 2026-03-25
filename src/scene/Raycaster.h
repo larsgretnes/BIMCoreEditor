@@ -38,6 +38,8 @@ namespace BimCore {
     private:
         static bool RayTriangle(const glm::vec3& ro, const glm::vec3& rd,
                                 const float* v0, const float* v1, const float* v2, float& tOut);
+        static float RayAABB(const glm::vec3& ro, const glm::vec3& invRd,
+                             const float* bmin, const float* bmax, float maxT);
     };
 
 } // namespace BimCore

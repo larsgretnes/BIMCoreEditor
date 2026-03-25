@@ -11,6 +11,7 @@ namespace BimCore {
 struct SceneUniforms {
     viewProjection : mat4x4<f32>,
     invViewProjection : mat4x4<f32>,
+    lightSpaceMatrix : mat4x4<f32>,
     sunDirection : vec4<f32>,
     highlightColor : vec4<f32>,
     clipMin : vec4<f32>,
@@ -36,7 +37,17 @@ fn clip_check(wpos : vec3<f32>) -> bool {
 )";
 
 // -------------------------------------------------------------------------
-// Main Opaque & Transparent Pipeline Shader (NOW WITH TEXTURES!)
+// Shadow Map Depth Pass
+// -------------------------------------------------------------------------
+static constexpr const char* kShadowWGSL = R"(
+struct VertIn  { @location(0) pos : vec3<f32> };
+@vertex fn vs_main(v : VertIn) -> @builtin(position) vec4<f32> {
+    return scene.lightSpaceMatrix * vec4<f32>(v.pos, 1.0);
+}
+)";
+
+// -------------------------------------------------------------------------
+// Main Opaque & Transparent Pipeline Shader (Shadows + PBR)
 // -------------------------------------------------------------------------
 static constexpr const char* kMainWGSL = R"(
 struct VertIn  {
@@ -50,33 +61,80 @@ struct VertOut {
     @location(0) nor : vec3<f32>,
     @location(1) wpos : vec3<f32>,
     @location(2) col : vec3<f32>,
-    @location(3) uv  : vec2<f32>
+    @location(3) uv  : vec2<f32>,
+    @location(4) lightSpacePos : vec4<f32>
 };
 
-@group(1) @binding(0) var baseColorTex : texture_2d<f32>;
-@group(1) @binding(1) var baseColorSamp : sampler;
+// --- FIXED: Bind Group Separation ---
+@group(1) @binding(0) var shadowMap: texture_depth_2d;
+@group(1) @binding(1) var shadowSampler: sampler_comparison;
+
+@group(2) @binding(0) var baseColorTex : texture_2d<f32>;
+@group(2) @binding(1) var baseColorSamp : sampler;
 
 @vertex fn vs_main(v : VertIn) -> VertOut {
     var o : VertOut;
     o.wpos = v.pos;
     o.clip = scene.viewProjection * vec4<f32>(v.pos, 1.0);
+    o.lightSpacePos = scene.lightSpaceMatrix * vec4<f32>(v.pos, 1.0);
     o.nor  = v.nor;
     o.col  = v.col;
     o.uv   = v.uv;
     return o;
 }
 
+fn calculateShadow(lightSpacePos: vec4<f32>, normal: vec3<f32>, lightDir: vec3<f32>) -> f32 {
+    let projCoords = lightSpacePos.xyz / lightSpacePos.w;
+    let uv = vec2<f32>(projCoords.x * 0.5 + 0.5, 1.0 - (projCoords.y * 0.5 + 0.5));
+    
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || projCoords.z > 1.0) { return 1.0; }
+
+    let bias = max(0.005 * (1.0 - dot(normal, lightDir)), 0.001);
+    var shadow = 0.0;
+    let texelSize = 1.0 / 4096.0;
+
+    for (var x = -1; x <= 1; x++) {
+        for (var y = -1; y <= 1; y++) {
+            let offset = vec2<f32>(f32(x), f32(y)) * texelSize;
+            shadow += textureSampleCompare(shadowMap, shadowSampler, uv + offset, projCoords.z - bias);
+        }
+    }
+    return shadow / 9.0;
+}
+
 fn shade(in : VertOut, baseColor: vec3<f32>) -> vec3<f32> {
     let dx = dpdx(in.wpos);
     let dy = dpdy(in.wpos);
     let faceNormal = normalize(cross(dx, dy));
+    
     if (scene.lightingMode == 0u) {
         let l1 = normalize(vec3<f32>( 0.7,  0.8,  1.0));
         let l2 = normalize(vec3<f32>(-0.5, -0.2, -1.0));
         let d  = abs(dot(faceNormal, l1)) + abs(dot(faceNormal, l2)) * 0.3 + 0.2;
         return baseColor * clamp(d, 0.0, 1.0);
     } else {
-        return baseColor * (abs(dot(faceNormal, normalize(scene.sunDirection.xyz))) + 0.1);
+        let lightDir = normalize(scene.sunDirection.xyz);
+        let camWorld = scene.invViewProjection * vec4<f32>(0.0, 0.0, 0.5, 1.0);
+        let viewDir = normalize((camWorld.xyz / camWorld.w) - in.wpos);
+        
+        let shadowAmount = calculateShadow(in.lightSpacePos, faceNormal, lightDir);
+        
+        let roughness = 0.4;
+        let metallic = 0.1;
+        let albedo = pow(baseColor, vec3<f32>(2.2));
+
+        let NdotL = max(dot(faceNormal, lightDir), 0.0);
+        let diffuse = albedo / 3.14159265;
+
+        let halfDir = normalize(lightDir + viewDir);
+        let specAngle = max(dot(faceNormal, halfDir), 0.0);
+        let specular = pow(specAngle, mix(2.0, 128.0, 1.0 - roughness)) * mix(0.04, 1.0, metallic);
+
+        let ambient = albedo * 0.15;
+        let sunColor = vec3<f32>(1.0, 0.95, 0.9) * 2.0; 
+        let finalRadiance = ambient + (diffuse + vec3<f32>(specular)) * sunColor * NdotL * shadowAmount;
+
+        return finalRadiance / (finalRadiance + vec3<f32>(1.0));
     }
 }
 
@@ -180,7 +238,7 @@ struct VertOut { @builtin(position) clip : vec4<f32>, @location(0) col: vec3<f32
     return o;
 }
 @fragment fn fs_main(in : VertOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.col, 1.0); // Now uses the UI-defined clipping plane color!
+    return vec4<f32>(in.col, 1.0);
 }
 )";
 
@@ -283,7 +341,7 @@ struct VertOut {
         vec2<f32>(-1.0, -1.0), vec2<f32>( 1.0, -1.0), vec2<f32>(-1.0,  1.0),
         vec2<f32>( 1.0, -1.0), vec2<f32>( 1.0,  1.0), vec2<f32>(-1.0,  1.0)
     );
-    let p = pos[vi] * 1000.0; // 1km grid
+    let p = pos[vi] * 1000.0; 
     var o : VertOut;
     o.wpos = vec3<f32>(p.x, p.y, 0.0);
     o.clip = scene.viewProjection * vec4<f32>(o.wpos, 1.0);
@@ -292,8 +350,6 @@ struct VertOut {
 
 @fragment fn fs_main(in : VertOut) -> @location(0) vec4<f32> {
     let coord = in.wpos.xy;
-
-    // Calculate the screen-space derivative to maintain crisp lines at distance
     var derivative = abs(dpdx(coord)) + abs(dpdy(coord));
     derivative = max(derivative, vec2<f32>(0.001));
 
@@ -309,12 +365,10 @@ struct VertOut {
     if (line1 < 1.0) { alpha = (1.0 - line1) * 0.15; }
     if (line10 < 1.0) { alpha = (1.0 - line10) * 0.4; }
 
-    // Draw the Red X and Green Y axes
     let axis = abs(coord) / derivative;
     if (axis.y < 1.5) { color = vec3<f32>(0.8, 0.2, 0.2); alpha = 1.0 - (axis.y/1.5); }
     if (axis.x < 1.5) { color = vec3<f32>(0.2, 0.8, 0.2); alpha = 1.0 - (axis.x/1.5); }
 
-    // Smoothly fade out the grid in the distance (up to 800 meters)
     let camWorld = scene.invViewProjection * vec4<f32>(0.0, 0.0, 0.5, 1.0);
     let camPos = camWorld.xyz / camWorld.w;
     let dist = length(coord - camPos.xy);

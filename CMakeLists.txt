@@ -4,6 +4,9 @@ project(BIMCoreEditor VERSION 0.0.1 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Suppress deprecation warnings from third-party fetched libraries (like tinygltf)
+set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
+
 add_compile_definitions(BIM_ENABLE_DEBUG_LOG)
 
 # Force binaries to land in build/bin/
@@ -159,8 +162,11 @@ set(APP_SOURCES
     src/input/InputController.cpp
     src/graphics/GraphicsContext.cpp
     src/graphics/Camera.cpp
+    src/graphics/PipelineManager.cpp
+    src/graphics/GPUResourceManager.cpp
     src/scene/SceneModel.cpp
     src/scene/Raycaster.cpp
+    src/scene/SceneContext.cpp
     src/io/IfcLoader.cpp
     src/io/IfcExporter.cpp
     src/io/GltfImporter.cpp
@@ -201,7 +207,9 @@ target_link_libraries(BIMCoreEditor PRIVATE
 )
 
 if(UNIX AND NOT APPLE)
-    target_link_libraries(BIMCoreEditor PRIVATE X11 dl pthread)
+    # Use pkg-config or find_package if you want to be robust, 
+    # but directly linking the known TBB library name works universally on Arch/Ubuntu.
+    target_link_libraries(BIMCoreEditor PRIVATE X11 dl pthread tbb)
 endif()
 
 # ==============================================================================
