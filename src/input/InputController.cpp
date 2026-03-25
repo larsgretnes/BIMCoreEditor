@@ -7,12 +7,49 @@
 #include <ImGuizmo.h>
 #include <ifcparse/IfcFile.h>
 #include <algorithm>
+#include <cmath>
 #include "core/Core.h"
 
 namespace BimCore {
 
     bool InputController::IsFlightMode() const {
         return m_navMode == NavigationMode::Flight;
+    }
+
+    DraggedPlane InputController::CheckPlaneHits(const Ray& ray, const SelectionState& state, bool showClips, glm::vec3& outHitPoint) {
+        if (!showClips) return DraggedPlane::None;
+
+        DraggedPlane bestPlane = DraggedPlane::None;
+        float bestDist = 1e9f;
+
+        auto testPlane = [&](DraggedPlane plane, float planeVal, int axis, int uAxis, int vAxis) {
+            if (std::abs(ray.direction[axis]) < 1e-6f) return; // Ray is parallel to the plane
+            
+            float t = (planeVal - ray.origin[axis]) / ray.direction[axis];
+            if (t > 0.0f && t < bestDist) {
+                glm::vec3 p = ray.origin + ray.direction * t;
+                
+                // Add a small 5% padding to the hit bounds so the user can easily grab the outer edges of the glass
+                float padU = (state.sceneMaxBounds[uAxis] - state.sceneMinBounds[uAxis]) * 0.05f;
+                float padV = (state.sceneMaxBounds[vAxis] - state.sceneMinBounds[vAxis]) * 0.05f;
+                
+                if (p[uAxis] >= state.sceneMinBounds[uAxis] - padU && p[uAxis] <= state.sceneMaxBounds[uAxis] + padU &&
+                    p[vAxis] >= state.sceneMinBounds[vAxis] - padV && p[vAxis] <= state.sceneMaxBounds[vAxis] + padV) {
+                    bestPlane = plane;
+                    bestDist = t;
+                    outHitPoint = p;
+                }
+            }
+        };
+
+        if (state.showPlaneXMin) testPlane(DraggedPlane::XMin, state.clipXMin, 0, 1, 2);
+        if (state.showPlaneXMax) testPlane(DraggedPlane::XMax, state.clipXMax, 0, 1, 2);
+        if (state.showPlaneYMin) testPlane(DraggedPlane::YMin, state.clipYMin, 1, 0, 2);
+        if (state.showPlaneYMax) testPlane(DraggedPlane::YMax, state.clipYMax, 1, 0, 2);
+        if (state.showPlaneZMin) testPlane(DraggedPlane::ZMin, state.clipZMin, 2, 0, 1);
+        if (state.showPlaneZMax) testPlane(DraggedPlane::ZMax, state.clipZMax, 2, 0, 1);
+
+        return bestPlane;
     }
 
     void InputController::Update(
@@ -24,12 +61,11 @@ namespace BimCore {
         float                        deltaTime,
         uint32_t&                    currentLightingMode,
         bool&                        triggerFocus,
-        CommandHistory&              history) // --- FIXED: Accept History ---
+        CommandHistory&              history) 
     {
         bool uiHovered = ImGui::GetIO().WantCaptureMouse || ImGuizmo::IsOver();
         bool uiTyping  = ImGui::GetIO().WantTextInput;
 
-        // --- FIXED: Process Undo/Redo Hotkeys ---
         if (!uiTyping) {
             bool ctrlPressed = window.IsKeyPressed(GLFW_KEY_LEFT_CONTROL) || window.IsKeyPressed(GLFW_KEY_RIGHT_CONTROL);
             bool shiftPressed = window.IsKeyPressed(GLFW_KEY_LEFT_SHIFT) || window.IsKeyPressed(GLFW_KEY_RIGHT_SHIFT);
@@ -99,7 +135,6 @@ namespace BimCore {
             }
             m_hWasDown = hNow;
 
-            // --- FIXED: Push Deletes to the Command History ---
             const bool delNow = window.IsKeyPressed(config.KeyDelete);
             if (delNow && !m_delWasDown && !selection.objects.empty()) {
                 std::vector<std::string> toDelete;
@@ -160,87 +195,143 @@ namespace BimCore {
                 }
             }
 
-            if (selection.measureToolActive && !uiHovered && !documents.empty()) {
-                Ray ray = ScreenToWorldRay(mx, my, window.GetWidth(), window.GetHeight(), camera.GetViewMatrix(), camera.GetProjectionMatrix(), camera.GetPosition());
+            Ray mouseRay = ScreenToWorldRay(mx, my, window.GetWidth(), window.GetHeight(), camera.GetViewMatrix(), camera.GetProjectionMatrix(), camera.GetPosition());
+            bool mouseDown = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
+            bool showClips = (selection.activeTool == InteractionTool::Select);
 
-                HitResult closestHit;
-                closestHit.distance = 1e9f;
-
-                for (auto& doc : documents) {
-                    if (doc->IsHidden()) continue;
-                    HitResult hit = Raycaster::CastRay(ray, doc->GetGeometry(), selection.clipXMin, selection.clipXMax, selection.clipYMin, selection.clipYMax, selection.clipZMin, selection.clipZMax, selection.hiddenObjects, !selection.showOpeningsAndSpaces);
-                    if (hit.hit && hit.distance < closestHit.distance) {
-                        closestHit = hit;
-                    }
+            // --- 1. Intercept Plane Clicks FIRST ---
+            if (mouseDown && !m_mouseWasDown && !uiHovered) {
+                m_draggedPlane = CheckPlaneHits(mouseRay, selection, showClips, m_dragStartPoint);
+                if (m_draggedPlane != DraggedPlane::None) {
+                    if (m_draggedPlane == DraggedPlane::XMin) m_dragStartClipValue = selection.clipXMin;
+                    else if (m_draggedPlane == DraggedPlane::XMax) m_dragStartClipValue = selection.clipXMax;
+                    else if (m_draggedPlane == DraggedPlane::YMin) m_dragStartClipValue = selection.clipYMin;
+                    else if (m_draggedPlane == DraggedPlane::YMax) m_dragStartClipValue = selection.clipYMax;
+                    else if (m_draggedPlane == DraggedPlane::ZMin) m_dragStartClipValue = selection.clipZMin;
+                    else if (m_draggedPlane == DraggedPlane::ZMax) m_dragStartClipValue = selection.clipZMax;
                 }
+            }
 
-                selection.isHoveringGeometry = closestHit.hit;
-                if (closestHit.hit) {
-                    bool altPressed = window.IsKeyPressed(GLFW_KEY_LEFT_ALT);
-                    if (altPressed) {
-                        selection.currentSnapType = SnapType::Face;
-                        selection.currentSnapPoint = closestHit.hitPoint;
-                    } else {
-                        float threshold = closestHit.distance * 0.02f;
+            // --- 2. Handle Plane Dragging ---
+            if (mouseDown && m_draggedPlane != DraggedPlane::None) {
+                glm::vec3 axisDir(0.0f);
+                float* targetClip = nullptr;
+                
+                if (m_draggedPlane == DraggedPlane::XMin) { axisDir = glm::vec3(1,0,0); targetClip = &selection.clipXMin; }
+                else if (m_draggedPlane == DraggedPlane::XMax) { axisDir = glm::vec3(1,0,0); targetClip = &selection.clipXMax; }
+                else if (m_draggedPlane == DraggedPlane::YMin) { axisDir = glm::vec3(0,1,0); targetClip = &selection.clipYMin; }
+                else if (m_draggedPlane == DraggedPlane::YMax) { axisDir = glm::vec3(0,1,0); targetClip = &selection.clipYMax; }
+                else if (m_draggedPlane == DraggedPlane::ZMin) { axisDir = glm::vec3(0,0,1); targetClip = &selection.clipZMin; }
+                else if (m_draggedPlane == DraggedPlane::ZMax) { axisDir = glm::vec3(0,0,1); targetClip = &selection.clipZMax; }
 
-                        float d0 = glm::length(closestHit.hitPoint - closestHit.hitV0);
-                        float d1 = glm::length(closestHit.hitPoint - closestHit.hitV1);
-                        float d2 = glm::length(closestHit.hitPoint - closestHit.hitV2);
+                // Build a mathematical plane facing the camera that contains our dragging axis
+                glm::mat4 view = camera.GetViewMatrix();
+                glm::vec3 camForward = -glm::normalize(glm::vec3(view[0][2], view[1][2], view[2][2]));
+                glm::vec3 n = glm::cross(axisDir, glm::cross(axisDir, camForward));
+                if (glm::length(n) < 1e-4f) n = glm::cross(axisDir, glm::vec3(0,1,0));
+                n = glm::normalize(n);
 
-                        float minDist = std::min({d0, d1, d2});
-                        if (minDist < threshold) {
-                            selection.currentSnapType = SnapType::Vertex;
-                            if (minDist == d0) selection.currentSnapPoint = closestHit.hitV0;
-                            else if (minDist == d1) selection.currentSnapPoint = closestHit.hitV1;
-                            else selection.currentSnapPoint = closestHit.hitV2;
+                // Intersect mouse ray with our dragging constraint plane
+                float t = glm::dot(m_dragStartPoint - mouseRay.origin, n) / glm::dot(mouseRay.direction, n);
+                glm::vec3 hit = mouseRay.origin + mouseRay.direction * t;
+                
+                float delta = glm::dot(hit - m_dragStartPoint, axisDir);
+                *targetClip = m_dragStartClipValue + delta;
+
+                // Stop planes from crossing into negative space
+                if (m_draggedPlane == DraggedPlane::XMin && selection.clipXMin > selection.clipXMax) selection.clipXMin = selection.clipXMax - 0.01f;
+                if (m_draggedPlane == DraggedPlane::XMax && selection.clipXMax < selection.clipXMin) selection.clipXMax = selection.clipXMin + 0.01f;
+                if (m_draggedPlane == DraggedPlane::YMin && selection.clipYMin > selection.clipYMax) selection.clipYMin = selection.clipYMax - 0.01f;
+                if (m_draggedPlane == DraggedPlane::YMax && selection.clipYMax < selection.clipYMin) selection.clipYMax = selection.clipYMin + 0.01f;
+                if (m_draggedPlane == DraggedPlane::ZMin && selection.clipZMin > selection.clipZMax) selection.clipZMin = selection.clipZMax - 0.01f;
+                if (m_draggedPlane == DraggedPlane::ZMax && selection.clipZMax < selection.clipZMin) selection.clipZMax = selection.clipZMin + 0.01f;
+
+                m_mouseWasDown = true;
+            } 
+            // --- 3. Normal Geometry Handling (Only if not dragging planes!) ---
+            else {
+                if (selection.measureToolActive && !uiHovered && !documents.empty()) {
+                    HitResult closestHit;
+                    closestHit.distance = 1e9f;
+
+                    for (auto& doc : documents) {
+                        if (doc->IsHidden()) continue;
+                        HitResult hit = Raycaster::CastRay(mouseRay, doc->GetGeometry(), selection.clipXMin, selection.clipXMax, selection.clipYMin, selection.clipYMax, selection.clipZMin, selection.clipZMax, selection.hiddenObjects, !selection.showOpeningsAndSpaces);
+                        if (hit.hit && hit.distance < closestHit.distance) {
+                            closestHit = hit;
+                        }
+                    }
+
+                    selection.isHoveringGeometry = closestHit.hit;
+                    if (closestHit.hit) {
+                        bool altPressed = window.IsKeyPressed(GLFW_KEY_LEFT_ALT);
+                        if (altPressed) {
+                            selection.currentSnapType = SnapType::Face;
+                            selection.currentSnapPoint = closestHit.hitPoint;
                         } else {
-                            auto closestOnLine = [](const glm::vec3& p, const glm::vec3& a, const glm::vec3& b) {
-                                glm::vec3 ab = b - a;
-                                float t = std::clamp(glm::dot(p - a, ab) / glm::dot(ab, ab), 0.0f, 1.0f);
-                                return a + t * ab;
-                            };
+                            float threshold = closestHit.distance * 0.02f;
 
-                            glm::vec3 e0 = closestOnLine(closestHit.hitPoint, closestHit.hitV0, closestHit.hitV1);
-                            glm::vec3 e1 = closestOnLine(closestHit.hitPoint, closestHit.hitV1, closestHit.hitV2);
-                            glm::vec3 e2 = closestOnLine(closestHit.hitPoint, closestHit.hitV2, closestHit.hitV0);
+                            float d0 = glm::length(closestHit.hitPoint - closestHit.hitV0);
+                            float d1 = glm::length(closestHit.hitPoint - closestHit.hitV1);
+                            float d2 = glm::length(closestHit.hitPoint - closestHit.hitV2);
 
-                            float ed0 = glm::length(closestHit.hitPoint - e0);
-                            float ed1 = glm::length(closestHit.hitPoint - e1);
-                            float ed2 = glm::length(closestHit.hitPoint - e2);
-
-                            float minEd = std::min({ed0, ed1, ed2});
-                            if (minEd < threshold) {
-                                selection.currentSnapType = SnapType::Edge;
-                                if (minEd == ed0) { selection.currentSnapPoint = e0; selection.currentSnapEdgeV0 = closestHit.hitV0; selection.currentSnapEdgeV1 = closestHit.hitV1; }
-                                else if (minEd == ed1) { selection.currentSnapPoint = e1; selection.currentSnapEdgeV0 = closestHit.hitV1; selection.currentSnapEdgeV1 = closestHit.hitV2; }
-                                else { selection.currentSnapPoint = e2; selection.currentSnapEdgeV0 = closestHit.hitV2; selection.currentSnapEdgeV1 = closestHit.hitV0; }
+                            float minDist = std::min({d0, d1, d2});
+                            if (minDist < threshold) {
+                                selection.currentSnapType = SnapType::Vertex;
+                                if (minDist == d0) selection.currentSnapPoint = closestHit.hitV0;
+                                else if (minDist == d1) selection.currentSnapPoint = closestHit.hitV1;
+                                else selection.currentSnapPoint = closestHit.hitV2;
                             } else {
-                                selection.currentSnapType = SnapType::Face;
-                                selection.currentSnapPoint = closestHit.hitPoint;
+                                auto closestOnLine = [](const glm::vec3& p, const glm::vec3& a, const glm::vec3& b) {
+                                    glm::vec3 ab = b - a;
+                                    float t = std::clamp(glm::dot(p - a, ab) / glm::dot(ab, ab), 0.0f, 1.0f);
+                                    return a + t * ab;
+                                };
+
+                                glm::vec3 e0 = closestOnLine(closestHit.hitPoint, closestHit.hitV0, closestHit.hitV1);
+                                glm::vec3 e1 = closestOnLine(closestHit.hitPoint, closestHit.hitV1, closestHit.hitV2);
+                                glm::vec3 e2 = closestOnLine(closestHit.hitPoint, closestHit.hitV2, closestHit.hitV0);
+
+                                float ed0 = glm::length(closestHit.hitPoint - e0);
+                                float ed1 = glm::length(closestHit.hitPoint - e1);
+                                float ed2 = glm::length(closestHit.hitPoint - e2);
+
+                                float minEd = std::min({ed0, ed1, ed2});
+                                if (minEd < threshold) {
+                                    selection.currentSnapType = SnapType::Edge;
+                                    if (minEd == ed0) { selection.currentSnapPoint = e0; selection.currentSnapEdgeV0 = closestHit.hitV0; selection.currentSnapEdgeV1 = closestHit.hitV1; }
+                                    else if (minEd == ed1) { selection.currentSnapPoint = e1; selection.currentSnapEdgeV0 = closestHit.hitV1; selection.currentSnapEdgeV1 = closestHit.hitV2; }
+                                    else { selection.currentSnapPoint = e2; selection.currentSnapEdgeV0 = closestHit.hitV2; selection.currentSnapEdgeV1 = closestHit.hitV0; }
+                                } else {
+                                    selection.currentSnapType = SnapType::Face;
+                                    selection.currentSnapPoint = closestHit.hitPoint;
+                                }
                             }
                         }
-                    }
 
-                    bool mouseDown = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
-                    if (mouseDown && !m_mouseWasDown) {
-                        if (!selection.isMeasuringActive) {
-                            selection.measureStartPoint = selection.currentSnapPoint;
-                            selection.isMeasuringActive = true;
-                        } else {
-                            selection.completedMeasurements.push_back({selection.measureStartPoint, selection.currentSnapPoint});
-                            selection.isMeasuringActive = false;
+                        if (mouseDown && !m_mouseWasDown) {
+                            if (!selection.isMeasuringActive) {
+                                selection.measureStartPoint = selection.currentSnapPoint;
+                                selection.isMeasuringActive = true;
+                            } else {
+                                selection.completedMeasurements.push_back({selection.measureStartPoint, selection.currentSnapPoint});
+                                selection.isMeasuringActive = false;
+                            }
                         }
+                    } else {
+                        selection.currentSnapType = SnapType::None;
                     }
+                    m_mouseWasDown = mouseDown;
+
+                } else if (!uiHovered && !documents.empty()) {
+                    HandleMousePicking(window, camera, documents, selection, config, history);
                 } else {
-                    selection.currentSnapType = SnapType::None;
+                    m_mouseWasDown = mouseDown;
                 }
+            }
 
-                m_mouseWasDown = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
-
-            } else if (!uiHovered && !documents.empty()) {
-                HandleMousePicking(window, camera, documents, selection, config, history);
-            } else {
-                m_mouseWasDown = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
+            if (!mouseDown) {
+                m_draggedPlane = DraggedPlane::None;
             }
 
         } else {

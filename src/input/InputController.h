@@ -25,6 +25,10 @@ namespace BimCore {
         CAD
     };
 
+    enum class DraggedPlane { 
+        None, XMin, XMax, YMin, YMax, ZMin, ZMax 
+    };
+
     // =============================================================================
     // InputController Class
     // =============================================================================
@@ -59,6 +63,9 @@ namespace BimCore {
                               const glm::mat4& proj,
                               const glm::vec3& camPos);
 
+        // --- NEW: Analytical plane intersection logic ---
+        DraggedPlane CheckPlaneHits(const Ray& ray, const SelectionState& state, bool showClips, glm::vec3& outHitPoint);
+
     private:
         // --- Internal State ---
         NavigationMode m_navMode      = NavigationMode::CAD;
@@ -74,6 +81,11 @@ namespace BimCore {
         bool           m_hWasDown     = false;
         bool           m_uiWasDown    = false;
         bool           m_delWasDown   = false;
+
+        // --- Plane Dragging State ---
+        DraggedPlane   m_draggedPlane = DraggedPlane::None;
+        glm::vec3      m_dragStartPoint {0.0f};
+        float          m_dragStartClipValue = 0.0f;
     };
 
 } // namespace BimCore
