@@ -264,7 +264,6 @@ namespace BimCore {
 
         ImGui::PopStyleVar();
         
-        // --- FIXED: Pass history to Reset Modal ---
         DrawResetModal(state, documents, triggerRebuild, history);
         
         ImGui::Separator();
@@ -572,16 +571,21 @@ namespace BimCore {
                                 }
 
                                 std::string extraTags = "";
-                                if (groupHasHidden) extraTags += " (hidden elements)";
-                                if (groupHasDeleted) extraTags += " (deleted elements)";
-                                if (groupHasEdited) extraTags += " (edited elements)";
+                                if (groupHasSelected && triggerFocus) {
+                                    ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+                                }
+                                if (groupHasHidden) extraTags += " (hidden)";
+                                if (groupHasDeleted) extraTags += " (deleted)";
+                                if (groupHasEdited) extraTags += " (edited)";
 
-                                if (groupHasSelected) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+                                // FIX: Prepend the selection indicator so it cannot be cut off
+                                std::string selPrefix = groupHasSelected ? "[#] " : "";
+                                std::string nodeLabel = selPrefix + type + " (" + std::to_string(indices.size()) + ")" + extraTags;
 
                                 ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.15f, 0.3f, 0.45f, 1.0f));
                                 ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.2f, 0.35f, 0.5f, 1.0f));
                                 ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.4f, 0.55f, 1.0f));
-                                bool isNodeOpen = ImGui::TreeNodeEx(type.c_str(), ImGuiTreeNodeFlags_Framed, "%s (%zu)%s", type.c_str(), indices.size(), extraTags.c_str());
+                                bool isNodeOpen = ImGui::TreeNodeEx(type.c_str(), ImGuiTreeNodeFlags_Framed, "%s", nodeLabel.c_str());
                                 ImGui::PopStyleColor(3);
 
                                 if (ImGui::BeginPopupContextItem()) {
@@ -719,6 +723,29 @@ namespace BimCore {
                                 }
                             }
 
+                            std::unordered_set<std::string> activeSpatialBranches;
+                            for (const auto& obj : state.objects) {
+                                std::string curr = obj.guid;
+                                while (!curr.empty()) {
+                                    activeSpatialBranches.insert(curr);
+                                    curr = doc->GetParent(curr);
+                                }
+                            }
+
+                            std::vector<std::string> structuralRoots;
+                            std::vector<std::string> uncategorizedRoots;
+
+                            for (const auto& root : rootNodes) {
+                                auto children = doc->GetChildren(root);
+                                bool hasGeom = geomMap.count(root) > 0;
+                                
+                                if (children.empty() && hasGeom) {
+                                    uncategorizedRoots.push_back(root);
+                                } else {
+                                    structuralRoots.push_back(root);
+                                }
+                            }
+
                             auto drawSpatialNode = [&](const std::string& nodeGuid, auto& self) -> void {
                                 auto children = doc->GetChildren(nodeGuid);
                                 auto itGeom = geomMap.find(nodeGuid);
@@ -745,8 +772,15 @@ namespace BimCore {
                                     isEdited = doc->HasModifiedProperties(nodeGuid);
                                     if (isEdited && !isDeleted) extraTags += " (Edited)";
                                 }
+
+                                bool branchHasSelected = activeSpatialBranches.count(nodeGuid) > 0;
+                                if (branchHasSelected && triggerFocus) {
+                                    ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+                                }
                                 
-                                std::string label = name + " [" + shortGuid + "]" + extraTags + "###" + nodeGuid;
+                                // FIX: Prepend the selection indicator here as well
+                                std::string selPrefix = branchHasSelected ? "[#] " : "";
+                                std::string label = selPrefix + name + " [" + shortGuid + "]" + extraTags + "###" + nodeGuid;
                                 
                                 ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_SpanAvailWidth;
                                 if (!hasChildren) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
@@ -758,7 +792,7 @@ namespace BimCore {
                                 }
                                 
                                 if (isDeleted) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-                                else if (isHidden) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                                else if (isHidden) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 1.0f, 1.0f));
                                 
                                 bool nodeOpen = ImGui::TreeNodeEx(label.c_str(), flags);
                                 
@@ -857,8 +891,21 @@ namespace BimCore {
                                 }
                             };
 
-                            for (const auto& root : rootNodes) {
+                            for (const auto& root : structuralRoots) {
                                 drawSpatialNode(root, drawSpatialNode);
+                            }
+
+                            if (!uncategorizedRoots.empty()) {
+                                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
+                                bool isUncatOpen = ImGui::TreeNodeEx("(Uncategorized Elements)", ImGuiTreeNodeFlags_Framed);
+                                ImGui::PopStyleColor();
+                                
+                                if (isUncatOpen) {
+                                    for (const auto& root : uncategorizedRoots) {
+                                        drawSpatialNode(root, drawSpatialNode);
+                                    }
+                                    ImGui::TreePop();
+                                }
                             }
                         }
                     }
@@ -1010,7 +1057,6 @@ namespace BimCore {
 
             if (ImGui::Button("OK", ImVec2(120, 0))) {
 
-                // Safely roll back the entire timeline
                 while(history.CanUndo()) {
                     history.Undo();
                 }
@@ -1018,7 +1064,6 @@ namespace BimCore {
                 for (auto& doc : documents) {
                     doc->SetHidden(false); 
                     
-                    // Manually revert property edits
                     for (auto& [guid, props] : state.originalProperties) {
                         for (auto& [k, v] : props) doc->UpdateElementProperty(guid, k, v);
                     }
@@ -1027,14 +1072,12 @@ namespace BimCore {
                 triggerRebuild = true;
 
                 state.explodeFactor = 0.0f;
-                state.updateGeometry = true; // This tells EditorApp to recalculate!
+                state.updateGeometry = true; 
                 
-                // --- FIXED: Slam values to infinity so UpdateGeometryOffsets() clamps them to exactly 0% and 100% ---
                 state.clipXMin = -1e9f; state.clipXMax = 1e9f;
                 state.clipYMin = -1e9f; state.clipYMax = 1e9f;
                 state.clipZMin = -1e9f; state.clipZMax = 1e9f;
 
-                // Turn off the visual planes
                 state.showPlaneXMin = false; state.showPlaneXMax = false;
                 state.showPlaneYMin = false; state.showPlaneYMax = false;
                 state.showPlaneZMin = false; state.showPlaneZMax = false;

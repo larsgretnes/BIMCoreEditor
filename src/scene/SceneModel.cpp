@@ -5,6 +5,8 @@
 #include "scene/SceneModel.h"
 #include <iostream>
 #include <algorithm>
+#include <execution>
+#include <mutex>
 #include <glm/gtc/matrix_transform.hpp>
 // Strictly using early-bound generated C++ schemas for maximum type safety.
 #include <ifcparse/IfcFile.h>
@@ -15,7 +17,6 @@ namespace BimCore {
 
     SceneModel::SceneModel(std::shared_ptr<IfcParse::IfcFile> database, RenderMesh geometry, const std::string& path)
     : m_database(database), m_geometry(geometry), m_filePath(path) {
-        // --- NEW: Build the groups immediately upon load to stop UI heap churn ---
         BuildUIGroups();
     }
 
@@ -227,9 +228,7 @@ namespace BimCore {
                                    m_geometry.subMeshes.end()
         );
 
-        // --- NEW: Rebuild the UI groups since the indices just shifted due to deletion ---
         BuildUIGroups();
-
         return true;
     }
 
@@ -403,30 +402,48 @@ namespace BimCore {
     void SceneModel::ApplyTransform(const glm::mat4& matrix) {
         glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(matrix)));
 
-        for (auto& v : m_geometry.originalVertices) {
-            glm::vec4 p = matrix * glm::vec4(v.position[0], v.position[1], v.position[2], 1.0f);
-            v.position[0] = p.x; v.position[1] = p.y; v.position[2] = p.z;
+        // FIXED: Parallelize the massive O(V) vertex transformation matrix math
+        std::for_each(std::execution::par_unseq,
+            m_geometry.originalVertices.begin(),
+            m_geometry.originalVertices.end(),
+            [&matrix, &normalMatrix](auto& v) {
+                glm::vec4 p = matrix * glm::vec4(v.position[0], v.position[1], v.position[2], 1.0f);
+                v.position[0] = p.x; v.position[1] = p.y; v.position[2] = p.z;
 
-            glm::vec3 n = normalMatrix * glm::vec3(v.normal[0], v.normal[1], v.normal[2]);
-            n = glm::normalize(n);
-            v.normal[0] = n.x; v.normal[1] = n.y; v.normal[2] = n.z;
-        }
+                glm::vec3 n = normalMatrix * glm::vec3(v.normal[0], v.normal[1], v.normal[2]);
+                n = glm::normalize(n);
+                v.normal[0] = n.x; v.normal[1] = n.y; v.normal[2] = n.z;
+            }
+        );
 
         m_geometry.vertices = m_geometry.originalVertices;
 
-        for (int j=0; j<3; ++j) { m_geometry.minBounds[j] = 1e9f; m_geometry.maxBounds[j] = -1e9f; }
+        // Recalculate bounds safely
+        float minX = 1e9f, minY = 1e9f, minZ = 1e9f;
+        float maxX = -1e9f, maxY = -1e9f, maxZ = -1e9f;
+
         for (const auto& v : m_geometry.vertices) {
-            for (int j=0; j<3; ++j) {
-                if (v.position[j] < m_geometry.minBounds[j]) m_geometry.minBounds[j] = v.position[j];
-                if (v.position[j] > m_geometry.maxBounds[j]) m_geometry.maxBounds[j] = v.position[j];
-            }
+            if (v.position[0] < minX) minX = v.position[0];
+            if (v.position[0] > maxX) maxX = v.position[0];
+            if (v.position[1] < minY) minY = v.position[1];
+            if (v.position[1] > maxY) maxY = v.position[1];
+            if (v.position[2] < minZ) minZ = v.position[2];
+            if (v.position[2] > maxZ) maxZ = v.position[2];
         }
+
+        m_geometry.minBounds[0] = minX; m_geometry.minBounds[1] = minY; m_geometry.minBounds[2] = minZ;
+        m_geometry.maxBounds[0] = maxX; m_geometry.maxBounds[1] = maxY; m_geometry.maxBounds[2] = maxZ;
+
         for (int j=0; j<3; ++j) m_geometry.center[j] = (m_geometry.minBounds[j] + m_geometry.maxBounds[j]) * 0.5f;
 
-        for (auto& sub : m_geometry.subMeshes) {
-            glm::vec4 cp = matrix * glm::vec4(sub.center[0], sub.center[1], sub.center[2], 1.0f);
-            sub.center[0] = cp.x; sub.center[1] = cp.y; sub.center[2] = cp.z;
-        }
+        std::for_each(std::execution::par_unseq,
+            m_geometry.subMeshes.begin(),
+            m_geometry.subMeshes.end(),
+            [&matrix](auto& sub) {
+                glm::vec4 cp = matrix * glm::vec4(sub.center[0], sub.center[1], sub.center[2], 1.0f);
+                sub.center[0] = cp.x; sub.center[1] = cp.y; sub.center[2] = cp.z;
+            }
+        );
     }
 
 }

@@ -171,6 +171,18 @@ set(APP_SOURCES
 )
 
 add_executable(BIMCoreEditor ${APP_SOURCES})
+# ==============================================================================
+# Platform-Specific Resources
+# ==============================================================================
+if(WIN32)
+    # Embed the manifest to unlock the 32,767 character Long Path limit
+    target_sources(BIMCoreEditor PRIVATE "app.rc")
+    
+    # Force CMake to NOT generate its own default manifest, 
+    # preventing the lld-link duplicate resource error.
+    set_target_properties(BIMCoreEditor PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS OFF)
+    string(APPEND CMAKE_EXE_LINKER_FLAGS " /MANIFEST:NO")
+endif()
 
 # Target Include Directories
 target_include_directories(BIMCoreEditor PRIVATE 

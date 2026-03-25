@@ -18,6 +18,7 @@
 #include <cmath>
 #include <chrono>
 #include <array>
+#include <filesystem>
 
 #include <ifcparse/IfcFile.h>
 #include <ifcgeom/Iterator.h>
@@ -110,7 +111,10 @@ std::shared_ptr<SceneModel> IfcLoader::LoadDocument(const std::string& filepath,
 
     if (state) { state->hasError.store(false); state->SetStatus("Verifying file...", 0.05f); }
 
-    std::ifstream check(filepath, std::ios::binary | std::ios::ate);
+    // Cast the UTF-8 std::string to char8_t to force safe C++20 cross-platform path resolution
+    std::filesystem::path safePath = std::filesystem::path(reinterpret_cast<const char8_t*>(filepath.c_str()));
+    
+    std::ifstream check(safePath, std::ios::binary | std::ios::ate);
     if (!check.good()) {
         setErr("File not found or inaccessible: " + filepath);
         return nullptr;

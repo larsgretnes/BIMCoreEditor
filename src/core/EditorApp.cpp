@@ -10,6 +10,7 @@
 #include <fstream>
 #include <map>
 #include <filesystem>
+#include <execution> // Required for parallel vector math
 
 #include "io/IfcExporter.h"
 #include "io/CsvImporter.h"
@@ -100,6 +101,21 @@ namespace BimCore {
         m_masterIndices.clear();
         std::vector<TextureData> masterTextures;
 
+        // OPTIMIZATION 1: Pre-calculate total sizes to prevent massive heap reallocations
+        size_t totalVertices = 0;
+        size_t totalIndices = 0;
+        size_t totalTextures = 0;
+        for (const auto& doc : m_documents) {
+            totalVertices += doc->GetGeometry().vertices.size();
+            totalIndices += doc->GetGeometry().indices.size();
+            totalTextures += doc->GetGeometry().textures.size();
+        }
+
+        // Allocate the memory exactly once.
+        m_masterVertices.reserve(totalVertices);
+        m_masterIndices.reserve(totalIndices);
+        masterTextures.reserve(totalTextures);
+
         uint32_t vOffset = 0;
         uint32_t iOffset = 0;
         int tOffset = 0;
@@ -111,8 +127,17 @@ namespace BimCore {
         for (auto& doc : m_documents) {
             auto& geom = doc->GetGeometry();
             
+            // Fast block copy of vertices
             m_masterVertices.insert(m_masterVertices.end(), geom.vertices.begin(), geom.vertices.end());
-            for (uint32_t idx : geom.indices) m_masterIndices.push_back(idx + vOffset);
+            
+            // OPTIMIZATION 2: Parallelized offset calculation instead of sequential push_back
+            size_t currentIdxStart = m_masterIndices.size();
+            m_masterIndices.resize(currentIdxStart + geom.indices.size());
+            std::transform(std::execution::par_unseq, 
+                           geom.indices.begin(), geom.indices.end(), 
+                           m_masterIndices.begin() + currentIdxStart, 
+                           [vOffset](uint32_t idx) { return idx + vOffset; });
+
             masterTextures.insert(masterTextures.end(), geom.textures.begin(), geom.textures.end());
 
             for (auto& sub : geom.subMeshes) {
@@ -146,7 +171,11 @@ namespace BimCore {
             }
         }
 
-        m_uiSystem.state.updateGeometry = true; 
+        // OPTIMIZATION 3: Kill the Double-Generation Bug
+        // We just cleanly built the master mesh. We DO NOT want UpdateGeometryOffsets 
+        // destroying and recreating it on the very next frame!
+        m_uiSystem.state.updateGeometry = false; 
+        
         m_triggerRebuild = false;
         m_triggerBatchRebuild = true;
     }
@@ -199,7 +228,6 @@ namespace BimCore {
             m_uiSystem.NewFrame();
             bool triggerFocus = false;
 
-            // --- FIXED: Pass history to the UI ---
             m_uiSystem.Render(m_uiSystem.state, *m_graphics, m_documents, *m_camera, m_config.MaxExplodeFactor, triggerFocus, m_input.IsFlightMode(), m_triggerRebuild, &m_commandHistory);
 
             if (m_uiSystem.state.triggerLoad) {
@@ -284,7 +312,6 @@ namespace BimCore {
                 m_camera->FocusOn(globalCenter, std::max(1.0f, radius));
             }
             
-            // --- FIXED: Pass history to input ---
             Update(deltaTime, triggerFocus);
             Render();
         }
@@ -347,7 +374,7 @@ namespace BimCore {
                 m_uiSystem.state.completedMeasurements.clear();
                 m_uiSystem.state.isMeasuringActive = false;
                 
-                m_commandHistory.Clear(); // Reset undo history on new file
+                m_commandHistory.Clear();
             }
         }
     }
@@ -391,7 +418,7 @@ namespace BimCore {
 
     void EditorApp::Update(float deltaTime, bool& triggerFocus) {
         auto primaryDoc = m_documents.empty() ? nullptr : m_documents[0];
-        // --- FIXED: Pass history ---
+        
         m_input.Update(*m_window, *m_camera, m_documents, m_uiSystem.state, m_config, deltaTime, m_currentLightMode, triggerFocus, m_commandHistory);
         m_camera->Update(deltaTime);
 
@@ -508,7 +535,14 @@ namespace BimCore {
         }
         glm::vec3 globalCenter((origMin[0]+origMax[0])*0.5f, (origMin[1]+origMax[1])*0.5f, (origMin[2]+origMax[2])*0.5f);
 
+        // OPTIMIZATION 4: Pre-allocate space for geometry offset loop
+        size_t totalVertices = 0;
+        for (const auto& doc : m_documents) {
+            totalVertices += doc->GetGeometry().vertices.size();
+        }
         m_masterVertices.clear();
+        m_masterVertices.reserve(totalVertices);
+        
         float newMin[3] = { kFloatMax, kFloatMax, kFloatMax };
         float newMax[3] = { kFloatMin, kFloatMin, kFloatMin };
 
