@@ -1,0 +1,65 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-clang-release",
+      "displayName": "Windows Clang (Release)",
+      "description": "Uses Ninja and clang-cl on Windows for maximum performance",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/windows-clang-release",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl",
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "environment": {
+        "CC": "clang-cl",
+        "CXX": "clang-cl"
+      }
+    },
+    {
+      "name": "windows-clang-debug",
+      "displayName": "Windows Clang (Debug)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/windows-clang-debug",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl",
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "environment": {
+        "CC": "clang-cl",
+        "CXX": "clang-cl"
+      }
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux Native (Release)",
+      "description": "Default Ninja build for Linux environments",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-clang-release",
+      "configurePreset": "windows-clang-release"
+    },
+    {
+      "name": "windows-clang-debug",
+      "configurePreset": "windows-clang-debug"
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release"
+    }
+  ]
+}
