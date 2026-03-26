@@ -60,12 +60,14 @@ namespace BimCore {
         return 1e9f;
     }
 
-    HitResult Raycaster::CastRay(const Ray& ray, const RenderMesh& mesh,
+    HitResult Raycaster::CastRay(const Ray& ray, SceneModel& doc,
                                  float cXMin, float cXMax, float cYMin, float cYMax, float cZMin, float cZMax,
                                  const std::unordered_set<std::string>& hidden,
-                                 bool skipOpenings)
+                                 bool skipOpenings,
+                                 float explodeFactor)
     {
         HitResult best;
+        const auto& mesh = doc.GetGeometry();
 
         glm::vec3 invRd(
             ray.direction.x == 0.0f ? 1e15f : 1.0f / ray.direction.x,
@@ -78,14 +80,23 @@ namespace BimCore {
             if (skipOpenings && (sub.type == "IfcOpeningElement" || sub.type == "IfcSpace")) continue;
             if (sub.indexCount == 0) continue;
 
-            if (mesh.bvhNodes.empty() || sub.bvhRootIndex >= mesh.bvhNodes.size()) {
-                // Fallback to O(N) if no BVH is available (e.g., glTF models)
+            glm::mat4 objMat = doc.GetObjectTransform(sub.guid);
+            bool hasTransform = (objMat != glm::mat4(1.0f));
+
+            // THE BRILLIANT FIX: Just raycast as normal! 
+            // If exploded/moved, the physical vertices are already in the correct global space. 
+            // We just bypass the unmoving BVH boxes.
+            bool bypassBVH = (explodeFactor > 0.01f || hasTransform);
+
+            if (bypassBVH || mesh.bvhNodes.empty() || sub.bvhRootIndex >= mesh.bvhNodes.size()) {
                 const uint32_t end = sub.startIndex + sub.indexCount;
                 for (uint32_t i = sub.startIndex; i + 2 < end; i += 3) {
+                    
                     const float* v0 = mesh.vertices[mesh.indices[i]].position;
                     const float* v1 = mesh.vertices[mesh.indices[i+1]].position;
                     const float* v2 = mesh.vertices[mesh.indices[i+2]].position;
 
+                    // Fast-prune against clipping planes
                     if (v0[0] > cXMax && v1[0] > cXMax && v2[0] > cXMax) continue;
                     if (v0[0] < cXMin && v1[0] < cXMin && v2[0] < cXMin) continue;
                     if (v0[1] > cYMax && v1[1] > cYMax && v2[1] > cYMax) continue;
@@ -99,9 +110,7 @@ namespace BimCore {
                         float hY = ray.origin[1] + ray.direction[1] * t;
                         float hZ = ray.origin[2] + ray.direction[2] * t;
 
-                        if (hX > cXMax || hX < cXMin || hY > cYMax || hY < cYMin || hZ > cZMax || hZ < cZMin) {
-                            continue;
-                        }
+                        if (hX > cXMax || hX < cXMin || hY > cYMax || hY < cYMin || hZ > cZMax || hZ < cZMin) continue;
 
                         best.hit = true;
                         best.distance = t;
@@ -118,7 +127,7 @@ namespace BimCore {
                 continue;
             }
 
-            // Traverse the Flat BVH (Iterative)
+            // Normal unexploded state uses the fast BVH
             uint32_t stack[64];
             int stackPtr = 0;
             stack[stackPtr++] = sub.bvhRootIndex;
@@ -131,9 +140,9 @@ namespace BimCore {
                 if (tBox >= best.distance) continue;
 
                 if (node.triCount > 0) {
-                    // Leaf Node
                     for (uint32_t i = 0; i < node.triCount; ++i) {
                         uint32_t idxStart = node.leftFirst + i * 3;
+                        
                         const float* v0 = mesh.vertices[mesh.indices[idxStart]].position;
                         const float* v1 = mesh.vertices[mesh.indices[idxStart+1]].position;
                         const float* v2 = mesh.vertices[mesh.indices[idxStart+2]].position;
@@ -151,9 +160,7 @@ namespace BimCore {
                             float hY = ray.origin[1] + ray.direction[1] * t;
                             float hZ = ray.origin[2] + ray.direction[2] * t;
 
-                            if (hX > cXMax || hX < cXMin || hY > cYMax || hY < cYMin || hZ > cZMax || hZ < cZMin) {
-                                continue;
-                            }
+                            if (hX > cXMax || hX < cXMin || hY > cYMax || hY < cYMin || hZ > cZMax || hZ < cZMin) continue;
 
                             best.hit = true;
                             best.distance = t;
@@ -168,7 +175,6 @@ namespace BimCore {
                         }
                     }
                 } else {
-                    // Inner Node
                     uint32_t child0 = node.leftFirst;
                     uint32_t child1 = node.leftFirst + 1;
                     

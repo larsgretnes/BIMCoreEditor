@@ -9,6 +9,7 @@
 #include <thread>
 #include <fstream>
 #include <filesystem>
+#include <cmath> // For std::cos, std::sin
 
 #include "io/IfcExporter.h"
 #include "io/CsvImporter.h"
@@ -17,8 +18,8 @@
 #include "io/GltfExporter.h"
 #include "io/StlImporter.h" 
 #include "io/StlExporter.h" 
-#include "io/Importer3MF.h" // <--- NEW: 3MF Importer
-#include "io/Exporter3MF.h" // <--- NEW: 3MF Exporter
+#include "io/Importer3MF.h" 
+#include "io/Exporter3MF.h" 
 #include "platform/portable-file-dialogs.h"
 
 namespace BimCore {
@@ -103,7 +104,7 @@ namespace BimCore {
 
             if (m_uiSystem.state.triggerLoad) {
                 m_uiSystem.state.triggerLoad = false;
-                auto fileDialog = pfd::open_file("Select File", m_currentFileDirectory, { "Supported Files", "*.ifc *.gltf *.glb *.stl *.3mf" }); // <--- OPPDATERT
+                auto fileDialog = pfd::open_file("Select File", m_currentFileDirectory, { "Supported Files", "*.ifc *.gltf *.glb *.stl *.3mf" });
                 auto files = fileDialog.result();
                 if (!files.empty()) {
                     std::lock_guard<std::mutex> lock(m_loadMutex);
@@ -119,7 +120,7 @@ namespace BimCore {
                 std::string title;
                 if (type == 1) { title = "Import CSV"; filters = { "CSV Files", "*.csv" }; }
                 else if (type == 2) { title = "Import BCF"; filters = { "BCF Zip Files", "*.bcf", "BCF XML Files", "*.bcfxml" }; }
-                else if (type == 3) { title = "Import 3D Model"; filters = { "3D Geometry", "*.gltf *.glb *.stl *.3mf" }; } // <--- OPPDATERT
+                else if (type == 3) { title = "Import 3D Model"; filters = { "3D Geometry", "*.gltf *.glb *.stl *.3mf" }; } 
 
                 auto fileDialog = pfd::open_file(title, m_currentFileDirectory, filters);
                 auto files = fileDialog.result();
@@ -149,7 +150,6 @@ namespace BimCore {
                         RenderMesh emptyMesh;
                         auto newDoc = std::make_shared<SceneModel>(nullptr, emptyMesh, path);
                         
-                        // <--- NYTT: Ruter kallet til riktig importør
                         if (ext == "stl") {
                             StlImporter::Import(path, newDoc);
                         } else if (ext == "3mf") {
@@ -180,7 +180,7 @@ namespace BimCore {
                         auto saveDialog = pfd::save_file("Export as STL", defaultName, { "STL Binary", "*.stl" });
                         std::string path = saveDialog.result();
                         if (!path.empty()) StlExporter::Export(path, m_sceneContext.GetDocuments()[0]);
-                    } else if (type == 3) { // <--- NYTT: Ruter eksportkallet for 3MF (Type 3 ble lagt til i UIToolbar.cpp)
+                    } else if (type == 3) { 
                         std::string defaultName = m_currentFileDirectory + "ModelExport.3mf";
                         auto saveDialog = pfd::save_file("Export as 3MF", defaultName, { "3D Manufacturing Format", "*.3mf" });
                         std::string path = saveDialog.result();
@@ -234,7 +234,6 @@ namespace BimCore {
             std::string ext = triggerPath.substr(triggerPath.find_last_of(".") + 1);
             std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
-            // <--- NYTT: Lagt til 3MF i sjekken for "Open File"-knappen (Ikke bare for Import-menyen)
             if (ext == "gltf" || ext == "glb" || ext == "stl" || ext == "3mf") {
                 RenderMesh emptyMesh;
                 auto newDoc = std::make_shared<SceneModel>(nullptr, emptyMesh, triggerPath);
@@ -445,7 +444,20 @@ namespace BimCore {
         scene.screenHeight = m_window->GetHeight();
         scene.lightingMode = m_currentLightMode;
         scene.highlightColor = m_uiSystem.state.color;
-        scene.sunDirection = glm::vec4(glm::normalize(glm::vec3(0.5f, 0.8f, 0.3f)), 0.0f);
+
+        // --- NEW: Spherical calculation for the Sun's trajectory ---
+        // 6:00 = Sunrise (0 rad), 12:00 = Noon (PI/2 rad), 18:00 = Sunset (PI rad)
+        float timeAngle = (m_uiSystem.state.timeOfDay - 6.0f) * (3.14159265f / 12.0f);
+        
+        glm::vec3 sunVec;
+        sunVec.x = -std::cos(timeAngle); // East to West
+        sunVec.y = std::sin(timeAngle);  // Elevation
+        sunVec.z = 0.4f;                 // Declination tilt (so shadows aren't perfectly straight)
+
+        // Clamp Y so the sun doesn't shine from perfectly horizontal or underneath the ground plane
+        if (sunVec.y < 0.05f) sunVec.y = 0.05f;
+
+        scene.sunDirection = glm::vec4(glm::normalize(sunVec), 0.0f);
 
         glm::vec3 globalCenter((m_sceneContext.minBounds[0] + m_sceneContext.maxBounds[0]) * 0.5f, 
                                (m_sceneContext.minBounds[1] + m_sceneContext.maxBounds[1]) * 0.5f, 
@@ -453,6 +465,7 @@ namespace BimCore {
         float radius = glm::length(glm::vec3(m_sceneContext.maxBounds[0] - m_sceneContext.minBounds[0], 
                                              m_sceneContext.maxBounds[1] - m_sceneContext.minBounds[1], 
                                              m_sceneContext.maxBounds[2] - m_sceneContext.minBounds[2])) * 0.5f;
+                                             
         glm::vec3 lightDir = glm::vec3(scene.sunDirection);
         glm::mat4 lightView = glm::lookAt(globalCenter + lightDir * radius, globalCenter, glm::vec3(0.0f, 1.0f, 0.0f));
         glm::mat4 lightProj = glm::ortho(-radius, radius, -radius, radius, 0.1f, radius * 2.0f);

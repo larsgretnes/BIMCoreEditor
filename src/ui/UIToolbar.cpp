@@ -4,6 +4,7 @@
 #include "UIToolbar.h"
 #include "UIMainPanel.h" 
 #include <imgui.h>
+#include <cstdio> // For snprintf
 
 #define ICON_FA_FOLDER_OPEN   "\xef\x81\xbc"
 #define ICON_FA_SAVE          "\xef\x83\x87"
@@ -42,7 +43,7 @@ namespace BimCore {
             ImGui::Separator();
             if (ImGui::MenuItem("Selection (.csv)")) state.triggerImport = 1;
             if (ImGui::MenuItem("Issues/Clashes (.bcf)")) state.triggerImport = 2;
-            if (ImGui::MenuItem("3D Geometry (.gltf / .glb / .stl / .3mf)")) state.triggerImport = 3; // <--- OPPDATERT: Inkludert 3MF
+            if (ImGui::MenuItem("3D Geometry (.gltf / .glb / .stl / .3mf)")) state.triggerImport = 3; 
             ImGui::EndPopup();
         }
         ImGui::SameLine();
@@ -54,7 +55,7 @@ namespace BimCore {
             ImGui::Separator();
             if (ImGui::MenuItem("3D Geometry (.gltf / .glb)")) state.triggerExport = 1;
             if (ImGui::MenuItem("Raw Triangles (.stl)")) state.triggerExport = 2;
-            if (ImGui::MenuItem("Manufacturing Format (.3mf)")) state.triggerExport = 3; // <--- NYTT: 3MF eksport
+            if (ImGui::MenuItem("Manufacturing Format (.3mf)")) state.triggerExport = 3; 
             ImGui::EndPopup();
         }
 
@@ -177,9 +178,28 @@ namespace BimCore {
 
         ImGui::PopStyleVar();
 
-        // <--- FJERNET det doble kallet til UIMainPanel::DrawResetModal(...) herfra!
-
         ImGui::Separator();
+
+        // --- NEW: Environment / Time of Day Control (Only when Realistic mode is on) ---
+        if (state.lightingMode == 1) {
+            ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.25f, 0.30f, 0.35f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.30f, 0.35f, 0.40f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.35f, 0.40f, 0.45f, 1.0f));
+            bool isEnvOpen = ImGui::CollapsingHeader("Environment", ImGuiTreeNodeFlags_DefaultOpen);
+            ImGui::PopStyleColor(3);
+
+            if (isEnvOpen) {
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                
+                // Format the raw float mathematically into a visually pleasing HH:MM format
+                int hours = static_cast<int>(state.timeOfDay);
+                int mins = static_cast<int>((state.timeOfDay - hours) * 60.0f);
+                char timeStr[32];
+                snprintf(timeStr, sizeof(timeStr), "Time: %02d:%02d", hours, mins);
+
+                ImGui::SliderFloat("##timeofday", &state.timeOfDay, 0.0f, 24.0f, timeStr);
+            }
+        }
 
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.25f, 0.30f, 0.35f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.30f, 0.35f, 0.40f, 1.0f));

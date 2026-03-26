@@ -5,12 +5,23 @@
 #include <imgui.h>
 #include <algorithm>
 #include <unordered_set>
+#include <unordered_map>
 #include <filesystem>
 
 #define ICON_FA_EYE "\xef\x81\xae"
 #define ICON_FA_UNDO "\xef\x80\x9e"
 
 namespace BimCore {
+
+    // --- High-performance caching for the Spatial tree ---
+    struct SpatialTreeCache {
+        std::unordered_map<std::string, uint32_t> geomMap; 
+        std::vector<std::string> structuralRoots;
+        std::vector<uint32_t> uncategorizedMeshIndices; // Stores direct integer indices, not strings!
+        size_t lastMeshCount = 0;
+        bool lastShowOpenings = false;
+    };
+    static std::unordered_map<const SceneModel*, SpatialTreeCache> s_spatialCaches;
 
     void UIModelTree::HandleShiftSelection(SelectionState& state, int visualIdx, uint32_t meshIdx, const std::string& groupName, const std::vector<uint32_t>& currentArray, std::shared_ptr<SceneModel> document) {
         ImGuiIO& io = ImGui::GetIO();
@@ -79,20 +90,26 @@ namespace BimCore {
         }
         ImGui::Separator();
         
-        if (ImGui::MenuItem("Hide Element(s)")) {
-            for (const auto& o : state.objects) {
-                state.hiddenObjects.insert(o.guid);
+        bool isHidden = state.hiddenObjects.count(sub->guid) > 0;
+        
+        if (isHidden) {
+            if (ImGui::MenuItem("Show Element(s)")) {
+                for (const auto& o : state.objects) {
+                    state.hiddenObjects.erase(o.guid);
+                }
+                state.hiddenStateChanged = true;
             }
-            state.objects.clear();
-            state.hiddenStateChanged = true;
-            state.selectionChanged = true;
-        }
-        if (ImGui::MenuItem("Show Element(s)")) {
-            for (const auto& o : state.objects) {
-                state.hiddenObjects.erase(o.guid);
+        } else {
+            if (ImGui::MenuItem("Hide Element(s)")) {
+                for (const auto& o : state.objects) {
+                    state.hiddenObjects.insert(o.guid);
+                }
+                state.objects.clear();
+                state.hiddenStateChanged = true;
+                state.selectionChanged = true;
             }
-            state.hiddenStateChanged = true;
         }
+        
         ImGui::Separator();
         if (ImGui::MenuItem("Delete Element(s)")) {
             for (const auto& o : state.objects) {
@@ -111,7 +128,7 @@ namespace BimCore {
         ImGui::TextDisabled("Model Tree View");
         ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 145.0f);
         
-        static int s_treeMode = 0; // 0 = Category, 1 = Spatial
+        static int s_treeMode = 0; 
         
         if (s_treeMode == 0) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
         if (ImGui::Button("Category", ImVec2(65, 0))) s_treeMode = 0;
@@ -128,8 +145,12 @@ namespace BimCore {
         ImGui::BeginChild("ModelTree", ImVec2(0, 0), true);
         ImVec2 sqBtn(ImGui::GetFrameHeight(), ImGui::GetFrameHeight());
 
+        std::unordered_set<const SceneModel*> currentActiveDocs;
+
         for (auto it = documents.begin(); it != documents.end(); ) {
             auto& doc = *it;
+            currentActiveDocs.insert(doc.get());
+
             std::string filename = std::filesystem::path(doc->GetFilePath()).filename().string();
             if (doc->IsHidden()) filename += " (Hidden)";
 
@@ -213,9 +234,7 @@ namespace BimCore {
                             }
 
                             std::string extraTags = "";
-                            if (groupHasSelected && triggerFocus) {
-                                ImGui::SetNextItemOpen(true, ImGuiCond_Always);
-                            }
+                            if (groupHasSelected && triggerFocus) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
                             if (groupHasHidden) extraTags += " (hidden)";
                             if (groupHasDeleted) extraTags += " (deleted)";
                             if (groupHasEdited) extraTags += " (edited)";
@@ -252,15 +271,11 @@ namespace BimCore {
                                 }
                                 ImGui::Separator();
                                 if (ImGui::MenuItem("Hide category")) {
-                                    for (uint32_t idx : indices) {
-                                        state.hiddenObjects.insert(subMeshes[idx].guid);
-                                    }
+                                    for (uint32_t idx : indices) state.hiddenObjects.insert(subMeshes[idx].guid);
                                     state.hiddenStateChanged = true;
                                 }
                                 if (ImGui::MenuItem("Show category")) {
-                                    for (uint32_t idx : indices) {
-                                        state.hiddenObjects.erase(subMeshes[idx].guid);
-                                    }
+                                    for (uint32_t idx : indices) state.hiddenObjects.erase(subMeshes[idx].guid);
                                     state.hiddenStateChanged = true;
                                 }
                                 ImGui::EndPopup();
@@ -297,19 +312,26 @@ namespace BimCore {
 
                                             bool isSelected = std::any_of(state.objects.begin(), state.objects.end(), [&](const SelectedObject& o) { return o.guid == sub.guid; });
 
+                                            bool colorPushed = false;
                                             if (isDeleted) {
                                                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+                                                colorPushed = true;
                                             } else if (isHidden) {
-                                                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                                                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f)); // Nice grey
+                                                colorPushed = true;
                                             }
 
                                             ImVec4 hoverColor = isSelected ? ImGui::GetStyleColorVec4(ImGuiCol_Header) : ImVec4(0,0,0,0);
                                             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, hoverColor);
                                             
-                                            if (ImGui::Selectable(label.c_str(), isSelected) && !isDeleted) {
+                                            bool clicked = ImGui::Selectable(label.c_str(), isSelected);
+                                            ImGui::PopStyleColor(); // Pop HeaderHovered
+                                            
+                                            if (colorPushed) ImGui::PopStyleColor(); // MUST pop text color BEFORE context menu
+
+                                            if (clicked && !isDeleted) {
                                                 HandleShiftSelection(state, i, indices[i], type + "_" + filename, indices, doc);
                                             }
-                                            ImGui::PopStyleColor();
 
                                             if (!isDeleted && ImGui::BeginPopupContextItem(("ctx_" + sub.guid).c_str())) {
                                                 DrawMultiSelectContextMenu(state, &sub, doc, triggerFocus);
@@ -318,9 +340,6 @@ namespace BimCore {
 
                                             if (isSelected && triggerFocus) {
                                                 ImGui::SetScrollHereY(0.5f);
-                                            }
-                                            if (isDeleted || isHidden) {
-                                                ImGui::PopStyleColor();
                                             }
 
                                             if (isDeleted) {
@@ -358,26 +377,58 @@ namespace BimCore {
                         }
                     } else {
                         // ==========================================
-                        // SPATIAL TREE MODE
+                        // SPATIAL TREE MODE (Completely Unbottlenecked)
                         // ==========================================
-                        std::unordered_map<std::string, const RenderSubMesh*> geomMap;
-                        for (const auto& sub : doc->GetGeometry().subMeshes) {
-                            geomMap[sub.guid] = &sub;
-                        }
+                        auto& cache = s_spatialCaches[doc.get()];
+                        const auto& subMeshes = doc->GetGeometry().subMeshes;
 
-                        std::vector<std::string> rootNodes;
-                        std::unordered_set<std::string> processedRoots;
-                        
-                        for (const auto& sub : doc->GetGeometry().subMeshes) {
-                            std::string curr = sub.guid;
-                            while (true) {
-                                std::string p = doc->GetParent(curr);
-                                if (p.empty()) break;
-                                curr = p;
+                        if (cache.lastMeshCount != subMeshes.size() || cache.geomMap.empty() || cache.lastShowOpenings != state.showOpeningsAndSpaces) {
+                            cache.geomMap.clear();
+                            cache.structuralRoots.clear();
+                            cache.uncategorizedMeshIndices.clear();
+
+                            cache.geomMap.reserve(subMeshes.size());
+                            for (uint32_t i = 0; i < subMeshes.size(); ++i) {
+                                cache.geomMap[subMeshes[i].guid] = i;
                             }
-                            if (processedRoots.insert(curr).second) {
-                                rootNodes.push_back(curr);
+
+                            std::vector<std::string> rootNodes;
+                            std::unordered_set<std::string> processedRoots;
+                            rootNodes.reserve(subMeshes.size());
+                            processedRoots.reserve(subMeshes.size());
+
+                            for (const auto& sub : subMeshes) {
+                                std::string curr = sub.guid;
+                                while (true) {
+                                    std::string p = doc->GetParent(curr);
+                                    if (p.empty() || p == curr) break; // Cycle prevention
+                                    curr = p;
+                                }
+                                if (processedRoots.insert(curr).second) {
+                                    rootNodes.push_back(curr);
+                                }
                             }
+
+                            cache.structuralRoots.reserve(rootNodes.size());
+                            cache.uncategorizedMeshIndices.reserve(rootNodes.size());
+
+                            for (const auto& root : rootNodes) {
+                                auto children = doc->GetChildren(root);
+                                auto itGeom = cache.geomMap.find(root);
+                                bool hasGeom = (itGeom != cache.geomMap.end());
+                                
+                                if (children.empty() && hasGeom) {
+                                    const auto& sub = subMeshes[itGeom->second];
+                                    if (!state.showOpeningsAndSpaces && (sub.type == "IfcOpeningElement" || sub.type == "IfcSpace")) continue;
+                                    
+                                    // Bypassing string passing entirely! Storing the absolute integer index.
+                                    cache.uncategorizedMeshIndices.push_back(itGeom->second);
+                                } else {
+                                    cache.structuralRoots.push_back(root);
+                                }
+                            }
+                            cache.lastMeshCount = subMeshes.size();
+                            cache.lastShowOpenings = state.showOpeningsAndSpaces;
                         }
 
                         std::unordered_set<std::string> activeSpatialBranches;
@@ -385,28 +436,17 @@ namespace BimCore {
                             std::string curr = obj.guid;
                             while (!curr.empty()) {
                                 activeSpatialBranches.insert(curr);
-                                curr = doc->GetParent(curr);
+                                std::string p = doc->GetParent(curr);
+                                if (p == curr) break; 
+                                curr = p;
                             }
                         }
 
-                        std::vector<std::string> structuralRoots;
-                        std::vector<std::string> uncategorizedRoots;
-
-                        for (const auto& root : rootNodes) {
-                            auto children = doc->GetChildren(root);
-                            bool hasGeom = geomMap.count(root) > 0;
-                            
-                            if (children.empty() && hasGeom) {
-                                uncategorizedRoots.push_back(root);
-                            } else {
-                                structuralRoots.push_back(root);
-                            }
-                        }
-
+                        // Recursive drawing ONLY for actual structural branches (IFC Sites, Buildings, etc)
                         auto drawSpatialNode = [&](const std::string& nodeGuid, auto& self) -> void {
                             auto children = doc->GetChildren(nodeGuid);
-                            auto itGeom = geomMap.find(nodeGuid);
-                            const RenderSubMesh* sub = (itGeom != geomMap.end()) ? itGeom->second : nullptr;
+                            auto itGeom = cache.geomMap.find(nodeGuid);
+                            const RenderSubMesh* sub = (itGeom != cache.geomMap.end()) ? &subMeshes[itGeom->second] : nullptr;
                             
                             bool hasChildren = !children.empty();
                             bool hasGeom = (sub != nullptr);
@@ -449,16 +489,19 @@ namespace BimCore {
                                 if (isSelected) flags |= ImGuiTreeNodeFlags_Selected;
                             }
                             
+                            bool colorPushed = false;
                             if (isDeleted) {
                                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+                                colorPushed = true;
                             } else if (isHidden) {
-                                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 1.0f, 1.0f));
+                                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                                colorPushed = true;
                             }
                             
                             bool nodeOpen = ImGui::TreeNodeEx(label.c_str(), flags);
                             
-                            if (isDeleted || isHidden) {
-                                ImGui::PopStyleColor();
+                            if (colorPushed) {
+                                ImGui::PopStyleColor(); // Popped correctly BEFORE context menu
                             }
                             
                             if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen() && hasGeom && !isDeleted) {
@@ -484,10 +527,10 @@ namespace BimCore {
                                         if (!ImGui::GetIO().KeyCtrl) state.objects.clear();
                                         while(!stack.empty()) {
                                             std::string curr = stack.back(); stack.pop_back();
-                                            if (geomMap.count(curr) && !state.deletedObjects.count(curr) && !state.hiddenObjects.count(curr)) {
+                                            if (cache.geomMap.count(curr) && !state.deletedObjects.count(curr) && !state.hiddenObjects.count(curr)) {
                                                 bool isSel = std::any_of(state.objects.begin(), state.objects.end(), [&](const SelectedObject& o) { return o.guid == curr; });
                                                 if (!isSel) {
-                                                    const auto* s = geomMap[curr];
+                                                    const auto* s = &subMeshes[cache.geomMap.at(curr)];
                                                     SelectedObject so; 
                                                     so.guid = s->guid; 
                                                     so.type = s->type; 
@@ -507,7 +550,7 @@ namespace BimCore {
                                         std::vector<std::string> stack = { nodeGuid };
                                         while(!stack.empty()) {
                                             std::string curr = stack.back(); stack.pop_back();
-                                            if (geomMap.count(curr)) state.hiddenObjects.insert(curr);
+                                            if (cache.geomMap.count(curr)) state.hiddenObjects.insert(curr);
                                             auto c = doc->GetChildren(curr);
                                             stack.insert(stack.end(), c.begin(), c.end());
                                         }
@@ -517,7 +560,7 @@ namespace BimCore {
                                         std::vector<std::string> stack = { nodeGuid };
                                         while(!stack.empty()) {
                                             std::string curr = stack.back(); stack.pop_back();
-                                            if (geomMap.count(curr)) state.hiddenObjects.erase(curr);
+                                            if (cache.geomMap.count(curr)) state.hiddenObjects.erase(curr);
                                             auto c = doc->GetChildren(curr);
                                             stack.insert(stack.end(), c.begin(), c.end());
                                         }
@@ -551,18 +594,119 @@ namespace BimCore {
                             }
                         };
 
-                        for (const auto& root : structuralRoots) {
+                        // Draw actual hierarchy
+                        for (const auto& root : cache.structuralRoots) {
                             drawSpatialNode(root, drawSpatialNode);
                         }
 
-                        if (!uncategorizedRoots.empty()) {
+                        // Fast-path rendering for mass items like 3MF/STL
+                        if (!cache.uncategorizedMeshIndices.empty()) {
                             ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
                             bool isUncatOpen = ImGui::TreeNodeEx("(Uncategorized Elements)", ImGuiTreeNodeFlags_Framed);
                             ImGui::PopStyleColor();
+
+                            if (ImGui::BeginPopupContextItem("ctx_uncat")) {
+                                if (ImGui::MenuItem("Select all uncategorized")) {
+                                    if (!ImGui::GetIO().KeyCtrl) state.objects.clear();
+                                    for (uint32_t meshIdx : cache.uncategorizedMeshIndices) {
+                                        const auto& sub = subMeshes[meshIdx];
+                                        if (!state.deletedObjects.count(sub.guid) && !state.hiddenObjects.count(sub.guid)) {
+                                            bool isSel = std::any_of(state.objects.begin(), state.objects.end(), [&](const SelectedObject& o) { return o.guid == sub.guid; });
+                                            if (!isSel) {
+                                                SelectedObject so; 
+                                                so.guid = sub.guid; 
+                                                so.type = sub.type; 
+                                                so.startIndex = sub.globalStartIndex; 
+                                                so.indexCount = sub.indexCount; 
+                                                so.properties = doc->GetElementProperties(sub.guid);
+                                                state.objects.push_back(so);
+                                            }
+                                        }
+                                    }
+                                    state.selectionChanged = true;
+                                    triggerFocus = true;
+                                }
+                                if (ImGui::MenuItem("Hide all uncategorized")) {
+                                    for (uint32_t meshIdx : cache.uncategorizedMeshIndices) {
+                                        state.hiddenObjects.insert(subMeshes[meshIdx].guid);
+                                    }
+                                    state.hiddenStateChanged = true;
+                                }
+                                if (ImGui::MenuItem("Show all uncategorized")) {
+                                    for (uint32_t meshIdx : cache.uncategorizedMeshIndices) {
+                                        state.hiddenObjects.erase(subMeshes[meshIdx].guid);
+                                    }
+                                    state.hiddenStateChanged = true;
+                                }
+                                ImGui::EndPopup();
+                            }
                             
                             if (isUncatOpen) {
-                                for (const auto& root : uncategorizedRoots) {
-                                    drawSpatialNode(root, drawSpatialNode);
+                                ImGuiListClipper clipper;
+                                clipper.Begin(static_cast<int>(cache.uncategorizedMeshIndices.size()));
+                                while (clipper.Step()) {
+                                    for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
+                                        
+                                        uint32_t meshIdx = cache.uncategorizedMeshIndices[i];
+                                        const auto& sub = subMeshes[meshIdx];
+                                        
+                                        if (state.cachedNames.find(sub.guid) == state.cachedNames.end()) {
+                                            auto props = doc->GetElementProperties(sub.guid);
+                                            state.cachedNames[sub.guid] = (props.count("Name") && !props["Name"].value.empty()) ? props["Name"].value : sub.type;
+                                        }
+                                        
+                                        std::string name = state.cachedNames[sub.guid];
+                                        std::string shortGuid = sub.guid.length() >= 8 ? sub.guid.substr(sub.guid.length() - 8) : sub.guid;
+                                        
+                                        std::string extraTags = "";
+                                        bool isHidden = state.hiddenObjects.count(sub.guid) > 0;
+                                        bool isDeleted = state.deletedObjects.count(sub.guid) > 0;
+                                        bool isEdited = doc->HasModifiedProperties(sub.guid);
+                                        if (isEdited && !isDeleted) extraTags += " (Edited)";
+
+                                        bool branchHasSelected = activeSpatialBranches.count(sub.guid) > 0;
+                                        if (branchHasSelected && triggerFocus) {
+                                            ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+                                        }
+                                        
+                                        std::string selPrefix = branchHasSelected ? "[#] " : "";
+                                        std::string label = selPrefix + name + " [" + shortGuid + "]" + extraTags + "###" + sub.guid;
+                                        
+                                        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+                                        
+                                        bool isSelected = std::any_of(state.objects.begin(), state.objects.end(), [&](const SelectedObject& o) { return o.guid == sub.guid; });
+                                        if (isSelected) flags |= ImGuiTreeNodeFlags_Selected;
+                                        
+                                        bool colorPushed = false;
+                                        if (isDeleted) {
+                                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+                                            colorPushed = true;
+                                        } else if (isHidden) {
+                                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                                            colorPushed = true;
+                                        }
+                                        
+                                        ImGui::TreeNodeEx(label.c_str(), flags); // No nodeOpen check needed for Leaf elements without Push
+                                        
+                                        if (colorPushed) ImGui::PopStyleColor();
+                                        
+                                        if (ImGui::IsItemClicked() && !isDeleted) {
+                                            HandleShiftSelection(state, i, meshIdx, "Uncat_" + filename, cache.uncategorizedMeshIndices, doc);
+                                        }
+                                        
+                                        if (ImGui::BeginPopupContextItem(("ctx_" + sub.guid).c_str())) {
+                                            if (isDeleted) {
+                                                if (ImGui::MenuItem("Undo delete")) {
+                                                    state.deletedObjects.erase(sub.guid);
+                                                    state.hiddenObjects.erase(sub.guid);
+                                                    state.hiddenStateChanged = true;
+                                                }
+                                            } else {
+                                                DrawMultiSelectContextMenu(state, &sub, doc, triggerFocus);
+                                            }
+                                            ImGui::EndPopup();
+                                        }
+                                    }
                                 }
                                 ImGui::TreePop();
                             }
@@ -575,6 +719,15 @@ namespace BimCore {
             ++it;
         }
         ImGui::EndChild();
+
+        // Memory cleanup
+        for (auto itCache = s_spatialCaches.begin(); itCache != s_spatialCaches.end(); ) {
+            if (currentActiveDocs.find(itCache->first) == currentActiveDocs.end()) {
+                itCache = s_spatialCaches.erase(itCache);
+            } else {
+                ++itCache;
+            }
+        }
     }
 
 } // namespace BimCore

@@ -23,13 +23,12 @@ namespace BimCore {
         float bestDist = 1e9f;
 
         auto testPlane = [&](DraggedPlane plane, float planeVal, int axis, int uAxis, int vAxis) {
-            if (std::abs(ray.direction[axis]) < 1e-6f) return; // Ray is parallel to the plane
+            if (std::abs(ray.direction[axis]) < 1e-6f) return; 
             
             float t = (planeVal - ray.origin[axis]) / ray.direction[axis];
             if (t > 0.0f && t < bestDist) {
                 glm::vec3 p = ray.origin + ray.direction * t;
                 
-                // Add a small 5% padding to the hit bounds so the user can easily grab the outer edges of the glass
                 float padU = (state.sceneMaxBounds[uAxis] - state.sceneMinBounds[uAxis]) * 0.05f;
                 float padV = (state.sceneMaxBounds[vAxis] - state.sceneMinBounds[vAxis]) * 0.05f;
                 
@@ -113,8 +112,12 @@ namespace BimCore {
             m_tabWasDown = tabNow;
 
             const bool lNow = window.IsKeyPressed(config.KeyToggleLighting);
-            if (lNow && !m_lWasDown) currentLightingMode = (currentLightingMode == 0) ? 1 : 0;
+            if (lNow && !m_lWasDown) {
+                currentLightingMode = (currentLightingMode == 0) ? 1 : 0;
+            }
             m_lWasDown = lNow;
+            
+            selection.lightingMode = currentLightingMode; 
 
             const bool fNow = window.IsKeyPressed(config.KeyFocus);
             if (fNow && !m_fWasDown) triggerFocus = true;
@@ -152,7 +155,10 @@ namespace BimCore {
             if (window.IsKeyPressed(config.KeyDown))     moveDir.y -= 1.0f;
 
             if (glm::length(moveDir) > 0.01f) {
-                float speedMult = config.BaseSpeed * (window.IsKeyPressed(config.KeySprint) ? config.SprintMultiplier : 1.0f);
+                float speedMult = config.BaseSpeed;
+                if (window.IsKeyPressed(config.KeyFast)) speedMult *= config.FlightFastMultiplier;
+                else if (window.IsKeyPressed(config.KeySlow)) speedMult *= config.FlightSlowMultiplier;
+
                 camera.ProcessKeyboard(moveDir * speedMult, deltaTime);
             }
         }
@@ -169,7 +175,10 @@ namespace BimCore {
         float scroll = (float)window.ConsumeScrollDelta();
 
         if (!uiHovered && std::abs(scroll) > 0.01f) {
-            float zoomMult = window.IsKeyPressed(config.KeySprint) ? config.ZoomSlowMultiplier : 1.0f;
+            float zoomMult = 1.0f;
+            if (window.IsKeyPressed(config.KeyFast)) zoomMult *= config.ZoomFastMultiplier;
+            else if (window.IsKeyPressed(config.KeySlow)) zoomMult *= config.ZoomSlowMultiplier;
+
             camera.ProcessZoom(scroll * zoomMult);
         }
 
@@ -199,7 +208,6 @@ namespace BimCore {
             bool mouseDown = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
             bool showClips = (selection.activeTool == InteractionTool::Select);
 
-            // --- 1. Intercept Plane Clicks FIRST ---
             if (mouseDown && !m_mouseWasDown && !uiHovered) {
                 m_draggedPlane = CheckPlaneHits(mouseRay, selection, showClips, m_dragStartPoint);
                 if (m_draggedPlane != DraggedPlane::None) {
@@ -212,7 +220,6 @@ namespace BimCore {
                 }
             }
 
-            // --- 2. Handle Plane Dragging ---
             if (mouseDown && m_draggedPlane != DraggedPlane::None) {
                 glm::vec3 axisDir(0.0f);
                 float* targetClip = nullptr;
@@ -224,21 +231,18 @@ namespace BimCore {
                 else if (m_draggedPlane == DraggedPlane::ZMin) { axisDir = glm::vec3(0,0,1); targetClip = &selection.clipZMin; }
                 else if (m_draggedPlane == DraggedPlane::ZMax) { axisDir = glm::vec3(0,0,1); targetClip = &selection.clipZMax; }
 
-                // Build a mathematical plane facing the camera that contains our dragging axis
                 glm::mat4 view = camera.GetViewMatrix();
                 glm::vec3 camForward = -glm::normalize(glm::vec3(view[0][2], view[1][2], view[2][2]));
                 glm::vec3 n = glm::cross(axisDir, glm::cross(axisDir, camForward));
                 if (glm::length(n) < 1e-4f) n = glm::cross(axisDir, glm::vec3(0,1,0));
                 n = glm::normalize(n);
 
-                // Intersect mouse ray with our dragging constraint plane
                 float t = glm::dot(m_dragStartPoint - mouseRay.origin, n) / glm::dot(mouseRay.direction, n);
                 glm::vec3 hit = mouseRay.origin + mouseRay.direction * t;
                 
                 float delta = glm::dot(hit - m_dragStartPoint, axisDir);
                 *targetClip = m_dragStartClipValue + delta;
 
-                // Stop planes from crossing into negative space
                 if (m_draggedPlane == DraggedPlane::XMin && selection.clipXMin > selection.clipXMax) selection.clipXMin = selection.clipXMax - 0.01f;
                 if (m_draggedPlane == DraggedPlane::XMax && selection.clipXMax < selection.clipXMin) selection.clipXMax = selection.clipXMin + 0.01f;
                 if (m_draggedPlane == DraggedPlane::YMin && selection.clipYMin > selection.clipYMax) selection.clipYMin = selection.clipYMax - 0.01f;
@@ -248,15 +252,26 @@ namespace BimCore {
 
                 m_mouseWasDown = true;
             } 
-            // --- 3. Normal Geometry Handling (Only if not dragging planes!) ---
             else {
                 if (selection.measureToolActive && !uiHovered && !documents.empty()) {
                     HitResult closestHit;
                     closestHit.distance = 1e9f;
 
+                    float cXMin = (showClips && selection.showPlaneXMin) ? selection.clipXMin : -1e9f;
+                    float cXMax = (showClips && selection.showPlaneXMax) ? selection.clipXMax :  1e9f;
+                    float cYMin = (showClips && selection.showPlaneYMin) ? selection.clipYMin : -1e9f;
+                    float cYMax = (showClips && selection.showPlaneYMax) ? selection.clipYMax :  1e9f;
+                    float cZMin = (showClips && selection.showPlaneZMin) ? selection.clipZMin : -1e9f;
+                    float cZMax = (showClips && selection.showPlaneZMax) ? selection.clipZMax :  1e9f;
+
                     for (auto& doc : documents) {
                         if (doc->IsHidden()) continue;
-                        HitResult hit = Raycaster::CastRay(mouseRay, doc->GetGeometry(), selection.clipXMin, selection.clipXMax, selection.clipYMin, selection.clipYMax, selection.clipZMin, selection.clipZMax, selection.hiddenObjects, !selection.showOpeningsAndSpaces);
+                        
+                        HitResult hit = Raycaster::CastRay(mouseRay, *doc, 
+                                                           cXMin, cXMax, cYMin, cYMax, cZMin, cZMax, 
+                                                           selection.hiddenObjects, !selection.showOpeningsAndSpaces, 
+                                                           selection.explodeFactor);
+                                                           
                         if (hit.hit && hit.distance < closestHit.distance) {
                             closestHit = hit;
                         }
@@ -346,17 +361,27 @@ namespace BimCore {
             window.GetMousePosition(mx, my);
             Ray ray = ScreenToWorldRay(mx, my, window.GetWidth(), window.GetHeight(), camera.GetViewMatrix(), camera.GetProjectionMatrix(), camera.GetPosition());
 
-            float cXMin = selection.clipXMin; float cXMax = selection.clipXMax;
-            float cYMin = selection.clipYMin; float cYMax = selection.clipYMax;
-            float cZMin = selection.clipZMin; float cZMax = selection.clipZMax;
-
             HitResult closestHit;
             closestHit.distance = 1e9f;
             std::shared_ptr<SceneModel> hitDoc = nullptr;
 
+            bool showClips = (selection.activeTool == InteractionTool::Select);
+
+            float cXMin = (showClips && selection.showPlaneXMin) ? selection.clipXMin : -1e9f;
+            float cXMax = (showClips && selection.showPlaneXMax) ? selection.clipXMax :  1e9f;
+            float cYMin = (showClips && selection.showPlaneYMin) ? selection.clipYMin : -1e9f;
+            float cYMax = (showClips && selection.showPlaneYMax) ? selection.clipYMax :  1e9f;
+            float cZMin = (showClips && selection.showPlaneZMin) ? selection.clipZMin : -1e9f;
+            float cZMax = (showClips && selection.showPlaneZMax) ? selection.clipZMax :  1e9f;
+
             for (auto& doc : documents) {
                 if (doc->IsHidden()) continue;
-                HitResult hit = Raycaster::CastRay(ray, doc->GetGeometry(), cXMin, cXMax, cYMin, cYMax, cZMin, cZMax, selection.hiddenObjects, !selection.showOpeningsAndSpaces);
+                
+                HitResult hit = Raycaster::CastRay(ray, *doc, 
+                                                   cXMin, cXMax, cYMin, cYMax, cZMin, cZMax, 
+                                                   selection.hiddenObjects, !selection.showOpeningsAndSpaces, 
+                                                   selection.explodeFactor);
+                                                   
                 if (hit.hit && hit.distance < closestHit.distance) {
                     closestHit = hit;
                     hitDoc = doc;

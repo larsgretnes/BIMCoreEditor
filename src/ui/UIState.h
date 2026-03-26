@@ -80,7 +80,6 @@ namespace BimCore {
         float                           explodeFactor      = 0.0f;
         bool                            updateGeometry     = false;
 
-        // --- FIXED: Added Dynamic Scene Bounds ---
         float                           sceneMinBounds[3]  = { -100.0f, -100.0f, -100.0f };
         float                           sceneMaxBounds[3]  = {  100.0f,  100.0f,  100.0f };
 
@@ -97,6 +96,10 @@ namespace BimCore {
         float                           planeColorZ[3]     = { 0.2f, 0.5f, 1.0f };
 
         int                             style              = 0;
+        
+        // --- NEW: Environment State ---
+        uint32_t                        lightingMode       = 0;
+        float                           timeOfDay          = 12.0f; // Default to Noon
 
         glm::vec4                       color              {1.0f, 0.0f, 0.0f, 0.5f};
 

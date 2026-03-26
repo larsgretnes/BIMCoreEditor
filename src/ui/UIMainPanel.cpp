@@ -18,34 +18,70 @@ namespace BimCore {
 
             if (ImGui::Button("OK", ImVec2(120, 0))) {
 
+                // 1. Undo all command history
                 while(history.CanUndo()) history.Undo();
 
+                float minB[3] = {1e9f, 1e9f, 1e9f};
+                float maxB[3] = {-1e9f, -1e9f, -1e9f};
+
+                // 2. Restore properties, visibility, and FORCE geometry pull-back
                 for (auto& doc : documents) {
                     doc->SetHidden(false); 
                     for (auto& [guid, props] : state.originalProperties) {
                         for (auto& [k, v] : props) doc->UpdateElementProperty(guid, k, v);
                     }
+                    
+                    auto& geom = doc->GetGeometry();
+                    
+                    // Directly overwrite the exploded vertices with the originals
+                    if (!geom.originalVertices.empty()) {
+                        geom.vertices = geom.originalVertices;
+                    }
+                    
+                    // Calculate the TRUE bounds of the model directly from the data
+                    for(int i=0; i<3; ++i) {
+                        if (geom.minBounds[i] < minB[i]) minB[i] = geom.minBounds[i];
+                        if (geom.maxBounds[i] > maxB[i]) maxB[i] = geom.maxBounds[i];
+                    }
                 }
                 
+                // 3. Reset Explode and Rebuild triggers
                 triggerRebuild = true;
                 state.explodeFactor = 0.0f;
                 state.updateGeometry = true; 
                 
-                state.clipXMin = -1e9f; state.clipXMax = 1e9f;
-                state.clipYMin = -1e9f; state.clipYMax = 1e9f;
-                state.clipZMin = -1e9f; state.clipZMax = 1e9f;
+                // 4. Snap Clipping Planes to the calculated true bounds
+                if (!documents.empty()) {
+                    state.clipXMin = minB[0]; state.clipXMax = maxB[0];
+                    state.clipYMin = minB[1]; state.clipYMax = maxB[1];
+                    state.clipZMin = minB[2]; state.clipZMax = maxB[2];
+                }
 
                 state.showPlaneXMin = false; state.showPlaneXMax = false;
                 state.showPlaneYMin = false; state.showPlaneYMax = false;
                 state.showPlaneZMin = false; state.showPlaneZMax = false;
 
+                // 5. Clear Search Buffers
                 memset(state.globalSearchBuf, 0, sizeof(state.globalSearchBuf));
                 memset(state.localSearchBuf, 0, sizeof(state.localSearchBuf));
 
-                state.originalProperties.clear(); state.deletedProperties.clear();
-                state.hiddenObjects.clear(); state.objects.clear();
-                state.hiddenStateChanged = true; state.triggerResetCamera = true; state.selectionChanged = true;
-                state.measureToolActive = false; state.completedMeasurements.clear(); state.isMeasuringActive = false;
+                // 6. Clear Selection, Hides, Deletes, and Property tracking
+                state.originalProperties.clear(); 
+                state.deletedProperties.clear();
+                
+                state.hiddenObjects.clear(); 
+                state.deletedObjects.clear(); 
+                state.objects.clear();
+                
+                // 7. Reset Measurements
+                state.measureToolActive = false; 
+                state.completedMeasurements.clear(); 
+                state.isMeasuringActive = false;
+
+                // 8. Trigger UI & Camera updates
+                state.hiddenStateChanged = true; 
+                state.triggerResetCamera = true; 
+                state.selectionChanged = true;
 
                 ImGui::CloseCurrentPopup();
             }
@@ -73,7 +109,7 @@ namespace BimCore {
         // 1. Render Toolbar
         UIToolbar::Render(state, documents, configMaxExplode, history, triggerRebuild);
         
-        // 2. Render Modal (Dette er det eneste stedet den skal kalles!)
+        // 2. Render Modal 
         DrawResetModal(state, documents, triggerRebuild, history);
 
         // 3. Render Search Panel (If docs exist)
