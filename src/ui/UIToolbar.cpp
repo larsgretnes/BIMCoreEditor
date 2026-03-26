@@ -2,7 +2,7 @@
 // BimCore/apps/editor/ui/UIToolbar.cpp
 // =============================================================================
 #include "UIToolbar.h"
-#include "UIMainPanel.h" // For DrawResetModal
+#include "UIMainPanel.h" 
 #include <imgui.h>
 
 #define ICON_FA_FOLDER_OPEN   "\xef\x81\xbc"
@@ -42,7 +42,7 @@ namespace BimCore {
             ImGui::Separator();
             if (ImGui::MenuItem("Selection (.csv)")) state.triggerImport = 1;
             if (ImGui::MenuItem("Issues/Clashes (.bcf)")) state.triggerImport = 2;
-            if (ImGui::MenuItem("3D Geometry (.gltf / .glb / .stl)")) state.triggerImport = 3;
+            if (ImGui::MenuItem("3D Geometry (.gltf / .glb / .stl / .3mf)")) state.triggerImport = 3; // <--- OPPDATERT: Inkludert 3MF
             ImGui::EndPopup();
         }
         ImGui::SameLine();
@@ -54,6 +54,7 @@ namespace BimCore {
             ImGui::Separator();
             if (ImGui::MenuItem("3D Geometry (.gltf / .glb)")) state.triggerExport = 1;
             if (ImGui::MenuItem("Raw Triangles (.stl)")) state.triggerExport = 2;
+            if (ImGui::MenuItem("Manufacturing Format (.3mf)")) state.triggerExport = 3; // <--- NYTT: 3MF eksport
             ImGui::EndPopup();
         }
 
@@ -176,7 +177,7 @@ namespace BimCore {
 
         ImGui::PopStyleVar();
 
-        UIMainPanel::DrawResetModal(state, documents, triggerRebuild, history);
+        // <--- FJERNET det doble kallet til UIMainPanel::DrawResetModal(...) herfra!
 
         ImGui::Separator();
 

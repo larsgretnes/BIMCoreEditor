@@ -14,10 +14,8 @@ namespace BimCore {
         ImGui::NewFrame();
     }
 
-    // <--- FIXED: Signature matches header with GLFWwindow* window
     void AppUI::Render(SelectionState& selection, GraphicsContext& graphics, std::vector<std::shared_ptr<SceneModel>>& documents, Camera& camera, float configMaxExplode, bool& triggerFocus, bool isFlightMode, bool& triggerRebuild, CommandHistory* history, GLFWwindow* window) {
 
-        // Restored your original overlay call
         m_overlay.RenderFlyMode(isFlightMode);
 
         if (!state.showUI) {
@@ -29,10 +27,8 @@ namespace BimCore {
 
         bool editingActiveAtStartOfFrame = !state.activeEditGuid.empty();
 
-        // <--- FIXED: Call the static UIMainPanel with the exact correct argument sequence
         UIMainPanel::Render(state, documents, configMaxExplode, triggerFocus, triggerRebuild, &camera, *history, window);
         
-        // Restored your original panel calls
         m_overlay.RenderStatusPanel(state, documents);
         m_propertiesPanel.Render(state, documents, triggerFocus);
         m_overlay.RenderContextMenu(state, triggerFocus);

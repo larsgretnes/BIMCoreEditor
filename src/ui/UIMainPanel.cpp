@@ -73,7 +73,7 @@ namespace BimCore {
         // 1. Render Toolbar
         UIToolbar::Render(state, documents, configMaxExplode, history, triggerRebuild);
         
-        // 2. Render Modal
+        // 2. Render Modal (Dette er det eneste stedet den skal kalles!)
         DrawResetModal(state, documents, triggerRebuild, history);
 
         // 3. Render Search Panel (If docs exist)

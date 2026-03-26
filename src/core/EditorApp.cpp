@@ -15,8 +15,10 @@
 #include "io/BcfImporter.h"
 #include "io/GltfImporter.h"
 #include "io/GltfExporter.h"
-#include "io/StlImporter.h" // <--- NEW
-#include "io/StlExporter.h" // <--- NEW
+#include "io/StlImporter.h" 
+#include "io/StlExporter.h" 
+#include "io/Importer3MF.h" // <--- NEW: 3MF Importer
+#include "io/Exporter3MF.h" // <--- NEW: 3MF Exporter
 #include "platform/portable-file-dialogs.h"
 
 namespace BimCore {
@@ -101,7 +103,7 @@ namespace BimCore {
 
             if (m_uiSystem.state.triggerLoad) {
                 m_uiSystem.state.triggerLoad = false;
-                auto fileDialog = pfd::open_file("Select File", m_currentFileDirectory, { "Supported Files", "*.ifc *.gltf *.glb *.stl" }); // Added .stl
+                auto fileDialog = pfd::open_file("Select File", m_currentFileDirectory, { "Supported Files", "*.ifc *.gltf *.glb *.stl *.3mf" }); // <--- OPPDATERT
                 auto files = fileDialog.result();
                 if (!files.empty()) {
                     std::lock_guard<std::mutex> lock(m_loadMutex);
@@ -117,7 +119,7 @@ namespace BimCore {
                 std::string title;
                 if (type == 1) { title = "Import CSV"; filters = { "CSV Files", "*.csv" }; }
                 else if (type == 2) { title = "Import BCF"; filters = { "BCF Zip Files", "*.bcf", "BCF XML Files", "*.bcfxml" }; }
-                else if (type == 3) { title = "Import 3D Model"; filters = { "3D Geometry", "*.gltf *.glb *.stl" }; } // Merged STL & glTF into one filter
+                else if (type == 3) { title = "Import 3D Model"; filters = { "3D Geometry", "*.gltf *.glb *.stl *.3mf" }; } // <--- OPPDATERT
 
                 auto fileDialog = pfd::open_file(title, m_currentFileDirectory, filters);
                 auto files = fileDialog.result();
@@ -147,8 +149,11 @@ namespace BimCore {
                         RenderMesh emptyMesh;
                         auto newDoc = std::make_shared<SceneModel>(nullptr, emptyMesh, path);
                         
+                        // <--- NYTT: Ruter kallet til riktig importør
                         if (ext == "stl") {
                             StlImporter::Import(path, newDoc);
+                        } else if (ext == "3mf") {
+                            Importer3MF::Import(path, newDoc); 
                         } else {
                             GltfImporter::Import(path, newDoc);
                         }
@@ -175,6 +180,11 @@ namespace BimCore {
                         auto saveDialog = pfd::save_file("Export as STL", defaultName, { "STL Binary", "*.stl" });
                         std::string path = saveDialog.result();
                         if (!path.empty()) StlExporter::Export(path, m_sceneContext.GetDocuments()[0]);
+                    } else if (type == 3) { // <--- NYTT: Ruter eksportkallet for 3MF (Type 3 ble lagt til i UIToolbar.cpp)
+                        std::string defaultName = m_currentFileDirectory + "ModelExport.3mf";
+                        auto saveDialog = pfd::save_file("Export as 3MF", defaultName, { "3D Manufacturing Format", "*.3mf" });
+                        std::string path = saveDialog.result();
+                        if (!path.empty()) Exporter3MF::Export(path, m_sceneContext.GetDocuments()[0]);
                     }
                 }
             }
@@ -224,12 +234,15 @@ namespace BimCore {
             std::string ext = triggerPath.substr(triggerPath.find_last_of(".") + 1);
             std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
-            if (ext == "gltf" || ext == "glb" || ext == "stl") {
+            // <--- NYTT: Lagt til 3MF i sjekken for "Open File"-knappen (Ikke bare for Import-menyen)
+            if (ext == "gltf" || ext == "glb" || ext == "stl" || ext == "3mf") {
                 RenderMesh emptyMesh;
                 auto newDoc = std::make_shared<SceneModel>(nullptr, emptyMesh, triggerPath);
                 
                 if (ext == "stl") {
                     StlImporter::Import(triggerPath, newDoc);
+                } else if (ext == "3mf") {
+                    Importer3MF::Import(triggerPath, newDoc);
                 } else {
                     GltfImporter::Import(triggerPath, newDoc);
                 }

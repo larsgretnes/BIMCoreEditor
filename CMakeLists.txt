@@ -1,10 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
+
+# --- NYTT: Tvinger moderne CMake til å godta eldre tredjepartsbiblioteker (som miniz) ---
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+
 project(BIMCoreEditor VERSION 0.0.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Suppress deprecation warnings from third-party fetched libraries (like tinygltf)
+# Suppress deprecation warnings from third-party fetched libraries
 set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
 
 add_compile_definitions(BIM_ENABLE_DEBUG_LOG)
@@ -112,12 +116,14 @@ FetchContent_Declare(imgui_fetch GIT_REPOSITORY https://github.com/ocornut/imgui
 FetchContent_Declare(nlohmann_json GIT_REPOSITORY https://github.com/nlohmann/json.git GIT_TAG v3.11.3)
 FetchContent_Declare(tinygltf GIT_REPOSITORY https://github.com/syoyo/tinygltf.git GIT_TAG v2.8.3)
 FetchContent_Declare(mini GIT_REPOSITORY https://github.com/pulzed/mINI.git GIT_TAG 0.9.14)
-
-# --- NEW: Fetch ImGuizmo ---
 FetchContent_Declare(imguizmo GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git GIT_TAG master)
 
-# Make sure imguizmo is added to this list!
-FetchContent_MakeAvailable(webgpu glfw3webgpu imgui_fetch nlohmann_json tinygltf mini imguizmo)
+# Fetch miniz og pugixml for 3MF støtte
+FetchContent_Declare(miniz GIT_REPOSITORY https://github.com/richgel999/miniz.git GIT_TAG 3.0.2)
+FetchContent_Declare(pugixml GIT_REPOSITORY https://github.com/zeux/pugixml.git GIT_TAG v1.14)
+
+# Vi bruker MakeAvailable for alt
+FetchContent_MakeAvailable(webgpu glfw3webgpu imgui_fetch nlohmann_json tinygltf mini imguizmo miniz pugixml)
 
 if(TARGET tinygltf AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(tinygltf PRIVATE -w)
@@ -134,11 +140,9 @@ add_library(imgui STATIC
     ${IMGUI_DIR}/imgui_widgets.cpp
     ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
     ${IMGUI_DIR}/backends/imgui_impl_wgpu.cpp
-    # --- NEW: Compile ImGuizmo right into the ImGui library ---
     ${imguizmo_SOURCE_DIR}/ImGuizmo.cpp 
 )
 
-# --- NEW: Add the ImGuizmo folder to the include directories ---
 target_include_directories(imgui PUBLIC 
     ${IMGUI_DIR} 
     ${IMGUI_DIR}/backends
@@ -148,7 +152,7 @@ target_compile_definitions(imgui PUBLIC IMGUI_IMPL_WEBGPU_BACKEND_WGPU)
 target_link_libraries(imgui PUBLIC webgpu glfw)
 
 # ==============================================================================
-# 5. THE EDITOR APPLICATION (Merged SDK & App)
+# 5. THE EDITOR APPLICATION
 # ==============================================================================
 set(APP_SOURCES
     src/core/main.cpp
@@ -177,64 +181,54 @@ set(APP_SOURCES
     src/io/GltfExporter.cpp
     src/io/BcfImporter.cpp
     src/io/CsvImporter.cpp
-    src/io/StlImporter.cpp    # <--- NEW
-    src/io/StlExporter.cpp    # <--- NEW
+    src/io/StlImporter.cpp
+    src/io/StlExporter.cpp
+    src/io/Importer3MF.cpp
+    src/io/Exporter3MF.cpp
     src/platform/Window.cpp
 )
 
 add_executable(BIMCoreEditor ${APP_SOURCES})
-# ==============================================================================
-# Platform-Specific Resources
-# ==============================================================================
+
 if(WIN32)
-    # Embed the manifest to unlock the 32,767 character Long Path limit
     target_sources(BIMCoreEditor PRIVATE "app.rc")
-    
-    # Force CMake to NOT generate its own default manifest, 
-    # preventing the lld-link duplicate resource error.
     set_target_properties(BIMCoreEditor PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS OFF)
     string(APPEND CMAKE_EXE_LINKER_FLAGS " /MANIFEST:NO")
 endif()
 
-# Target Include Directories
 target_include_directories(BIMCoreEditor PRIVATE 
     src 
     "${GLM_INCLUDE_DIR}" 
     "${mini_SOURCE_DIR}/src"
 )
-# Add third-party headers as SYSTEM to suppress their warnings
-target_include_directories(BIMCoreEditor SYSTEM PRIVATE "${tinygltf_SOURCE_DIR}")
 
-# Link libraries
+target_include_directories(BIMCoreEditor SYSTEM PRIVATE 
+    "${tinygltf_SOURCE_DIR}"
+)
+
 target_link_libraries(BIMCoreEditor PRIVATE 
     imgui glfw webgpu glfw3webgpu
     IfcOpenShell::IfcParse IfcOpenShell::IfcGeom
     nlohmann_json::nlohmann_json tinygltf
+    miniz pugixml
 )
 
 if(UNIX AND NOT APPLE)
-    # Use pkg-config or find_package if you want to be robust, 
-    # but directly linking the known TBB library name works universally on Arch/Ubuntu.
     target_link_libraries(BIMCoreEditor PRIVATE X11 dl pthread tbb)
 endif()
 
 # ==============================================================================
-# 6. ASSET & RUNTIME DEPLOYMENT (Pristine Dist Folder)
+# 6. ASSET & RUNTIME DEPLOYMENT
 # ==============================================================================
 set(DIST_DIR "${CMAKE_SOURCE_DIR}/dist")
 
 add_custom_command(TARGET BIMCoreEditor POST_BUILD
-    # Create the pristine folder
     COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}"
-
-    # Copy the application and assets
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:BIMCoreEditor>" "${DIST_DIR}/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/fa-solid-900.ttf" "${DIST_DIR}/"
-
     COMMENT "Publishing pristine build to /dist folder..."
 )
 
-# OS-Specific WebGPU Native Library Name
 if(WIN32)
     set(WGPU_NAME "wgpu_native.dll")
 elseif(APPLE)
@@ -243,7 +237,6 @@ else()
     set(WGPU_NAME "libwgpu_native.so")
 endif()
 
-# Safely copy WebGPU if found
 file(GLOB_RECURSE WGPU_LIB "${CMAKE_BINARY_DIR}/_deps/*/${WGPU_NAME}")
 if(WGPU_LIB)
     add_custom_command(TARGET BIMCoreEditor POST_BUILD
@@ -251,14 +244,12 @@ if(WGPU_LIB)
     )
 endif()
 
-# Copy ONLY the heavy SDK DLLs we actually need (Windows Only)
 if(WIN32)
     file(GLOB RUNTIME_DLLS
         "${BIMCORE_SDK_BIN_DIR}/Ifc*.dll"
         "${BIMCORE_SDK_BIN_DIR}/TK*.dll"
         "${BIMCORE_SDK_BIN_DIR}/glfw*.dll"
     )
-
     if(RUNTIME_DLLS)
         add_custom_command(TARGET BIMCoreEditor POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RUNTIME_DLLS} "${DIST_DIR}/"

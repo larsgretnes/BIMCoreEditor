@@ -11,7 +11,7 @@
       "displayName": "Windows Clang (Release)",
       "description": "Uses Ninja and clang-cl on Windows for maximum performance",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/windows-clang-release",
+      "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_C_COMPILER": "clang-cl",
         "CMAKE_CXX_COMPILER": "clang-cl",
@@ -27,7 +27,7 @@
       "name": "windows-clang-debug",
       "displayName": "Windows Clang (Debug)",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/windows-clang-debug",
+      "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_C_COMPILER": "clang-cl",
         "CMAKE_CXX_COMPILER": "clang-cl",
@@ -44,7 +44,7 @@
       "displayName": "Linux Native (Release)",
       "description": "Default Ninja build for Linux environments",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/linux-release",
+      "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
