@@ -8,7 +8,7 @@ namespace BimCore {
     struct EngineConfig {
         // --- Centralized Application Info ---
         std::string AppName = "BIMCore Editor";
-        std::string AppVersion = "0.2";
+        std::string AppVersion = "0.3"; // <--- BUMPED TO 0.3!
 
         int WindowWidth = 1280;
         int WindowHeight = 720;
@@ -21,13 +21,12 @@ namespace BimCore {
         float ZoomSpeed = 1.0f;
         float ZoomSlowMultiplier = 0.2f;
 
-        // --- NEW: Extracted Camera Math Constants ---
-        float ZoomFlyMultiplier = 1.0f;     // Doubled speed!
-        float CameraFocusSpeed = 2.5f;      // Animation speed for focusing
-        float CameraFocusPadding = 1.2f;    // Bounding box padding when focusing
-        float CameraMinOrbitDistance = 0.1f; // Pivot push threshold
-        float CameraPivotJumpThreshold = 0.5f; // Distance required to animate a pivot change
-        float CameraPanReferenceHeight = 1080.0f; // Screen height mapping for pan speed
+        float ZoomFlyMultiplier = 1.0f;     
+        float CameraFocusSpeed = 2.5f;      
+        float CameraFocusPadding = 1.2f;    
+        float CameraMinOrbitDistance = 0.1f; 
+        float CameraPivotJumpThreshold = 0.5f; 
+        float CameraPanReferenceHeight = 1080.0f; 
 
         float CadPanSpeed        = 250.0f;
         float CadOrbitSpeed      = 250.0f;

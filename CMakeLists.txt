@@ -159,6 +159,10 @@ set(APP_SOURCES
     src/ui/UIMainPanel.cpp
     src/ui/UIPropertiesPanel.cpp
     src/ui/UIStatusOverlay.cpp
+    src/ui/UIToolbar.cpp
+    src/ui/UISearchPanel.cpp
+    src/ui/UIModelTree.cpp
+    src/ui/UIGizmoOverlay.cpp
     src/input/InputController.cpp
     src/graphics/GraphicsContext.cpp
     src/graphics/Camera.cpp
@@ -173,6 +177,8 @@ set(APP_SOURCES
     src/io/GltfExporter.cpp
     src/io/BcfImporter.cpp
     src/io/CsvImporter.cpp
+    src/io/StlImporter.cpp    # <--- NEW
+    src/io/StlExporter.cpp    # <--- NEW
     src/platform/Window.cpp
 )
 

@@ -65,7 +65,6 @@ struct VertOut {
     @location(4) lightSpacePos : vec4<f32>
 };
 
-// --- FIXED: Bind Group Separation ---
 @group(1) @binding(0) var shadowMap: texture_depth_2d;
 @group(1) @binding(1) var shadowSampler: sampler_comparison;
 
@@ -83,13 +82,16 @@ struct VertOut {
     return o;
 }
 
+// PCF Soft Shadows with Slope-Scaled Bias (Cures Shadow Acne!)
 fn calculateShadow(lightSpacePos: vec4<f32>, normal: vec3<f32>, lightDir: vec3<f32>) -> f32 {
     let projCoords = lightSpacePos.xyz / lightSpacePos.w;
     let uv = vec2<f32>(projCoords.x * 0.5 + 0.5, 1.0 - (projCoords.y * 0.5 + 0.5));
     
+    // If we are outside the shadow map bounds, the area is fully lit
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || projCoords.z > 1.0) { return 1.0; }
 
-    let bias = max(0.005 * (1.0 - dot(normal, lightDir)), 0.001);
+    // Dynamic Bias: Steeper angles get more bias. Prevents acne without disconnecting the shadow.
+    let bias = max(0.003 * (1.0 - dot(normal, lightDir)), 0.0008);
     var shadow = 0.0;
     let texelSize = 1.0 / 4096.0;
 
@@ -99,42 +101,71 @@ fn calculateShadow(lightSpacePos: vec4<f32>, normal: vec3<f32>, lightDir: vec3<f
             shadow += textureSampleCompare(shadowMap, shadowSampler, uv + offset, projCoords.z - bias);
         }
     }
-    return shadow / 9.0;
+    return shadow / 9.0; // 3x3 PCF filter
 }
 
 fn shade(in : VertOut, baseColor: vec3<f32>) -> vec3<f32> {
+    // Generate crisp geometric normals using screen-space derivatives
     let dx = dpdx(in.wpos);
     let dy = dpdy(in.wpos);
-    let faceNormal = normalize(cross(dx, dy));
+    var faceNormal = normalize(cross(dx, dy));
+    
+    // Ensure the normal always faces the camera (fixes backface black-out issues)
+    let camWorld = scene.invViewProjection * vec4<f32>(0.0, 0.0, 0.5, 1.0);
+    let viewDir = normalize((camWorld.xyz / camWorld.w) - in.wpos);
+    if (dot(faceNormal, viewDir) < 0.0) {
+        faceNormal = -faceNormal;
+    }
     
     if (scene.lightingMode == 0u) {
+        // --- 0: Old Flat IFC Coloring ---
         let l1 = normalize(vec3<f32>( 0.7,  0.8,  1.0));
         let l2 = normalize(vec3<f32>(-0.5, -0.2, -1.0));
         let d  = abs(dot(faceNormal, l1)) + abs(dot(faceNormal, l2)) * 0.3 + 0.2;
         return baseColor * clamp(d, 0.0, 1.0);
     } else {
+        // --- 1: New PBR + Hemisphere + Shadow Rendering ---
         let lightDir = normalize(scene.sunDirection.xyz);
-        let camWorld = scene.invViewProjection * vec4<f32>(0.0, 0.0, 0.5, 1.0);
-        let viewDir = normalize((camWorld.xyz / camWorld.w) - in.wpos);
-        
         let shadowAmount = calculateShadow(in.lightSpacePos, faceNormal, lightDir);
         
-        let roughness = 0.4;
-        let metallic = 0.1;
-        let albedo = pow(baseColor, vec3<f32>(2.2));
+        // PBR Physical Inputs
+        let roughness = 0.6;
+        let metallic = 0.05;
+        let albedo = pow(baseColor, vec3<f32>(2.2)); // Convert sRGB to Linear space for math
 
+        // 1. Direct Sun Light
         let NdotL = max(dot(faceNormal, lightDir), 0.0);
         let diffuse = albedo / 3.14159265;
-
+        
         let halfDir = normalize(lightDir + viewDir);
         let specAngle = max(dot(faceNormal, halfDir), 0.0);
         let specular = pow(specAngle, mix(2.0, 128.0, 1.0 - roughness)) * mix(0.04, 1.0, metallic);
+        let sunColor = vec3<f32>(1.0, 0.96, 0.9) * 2.5; // Bright, warm sun
+        
+        let directLight = (diffuse + vec3<f32>(specular)) * sunColor * NdotL * shadowAmount;
 
-        let ambient = albedo * 0.15;
-        let sunColor = vec3<f32>(1.0, 0.95, 0.9) * 2.0; 
-        let finalRadiance = ambient + (diffuse + vec3<f32>(specular)) * sunColor * NdotL * shadowAmount;
+        // 2. Hemisphere Ambient Light (The secret to realistic unlit areas)
+        // Up-facing polygons get blue sky, down-facing get dark ground bounce
+        let skyColor = vec3<f32>(0.55, 0.75, 0.95) * 0.7; 
+        let groundColor = vec3<f32>(0.15, 0.15, 0.16); 
+        let hemiMix = faceNormal.z * 0.5 + 0.5; // Z is up in BIM/IFC
+        let ambientLight = mix(groundColor, skyColor, hemiMix);
+        let ambient = albedo * ambientLight;
+        
+        // 3. Combine Lights
+        let finalRadiance = ambient + directLight;
 
-        return finalRadiance / (finalRadiance + vec3<f32>(1.0));
+        // 4. ACES Filmic Tone Mapping
+        // Compresses massive light values down to monitor ranges beautifully
+        let a = 2.51;
+        let b = 0.03;
+        let c = 2.43;
+        let d = 0.59;
+        let e = 0.14;
+        let mappedColor = clamp((finalRadiance*(a*finalRadiance+b))/(finalRadiance*(c*finalRadiance+d)+e), vec3<f32>(0.0), vec3<f32>(1.0));
+
+        // Convert back to sRGB for monitor display
+        return pow(mappedColor, vec3<f32>(1.0 / 2.2));
     }
 }
 

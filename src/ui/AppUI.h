@@ -11,13 +11,16 @@
 #include "scene/SceneModel.h"
 #include "core/CommandHistory.h" 
 
+struct GLFWwindow; // <--- NEW: Forward declare GLFWwindow
+
 namespace BimCore {
     class AppUI {
     public:
         void NewFrame();
-        void Render(SelectionState& selection, GraphicsContext& graphics, std::vector<std::shared_ptr<SceneModel>>& documents, Camera& camera, float configMaxExplode, bool& triggerFocus, bool isFlightMode, bool& triggerRebuild, CommandHistory* history);
+        
+        // <--- FIXED: Added GLFWwindow* window to the end of the signature
+        void Render(SelectionState& selection, GraphicsContext& graphics, std::vector<std::shared_ptr<SceneModel>>& documents, Camera& camera, float configMaxExplode, bool& triggerFocus, bool isFlightMode, bool& triggerRebuild, CommandHistory* history, GLFWwindow* window);
 
-        // --- FIXED: Moved state to public so EditorApp can access it! ---
         SelectionState state;
 
     private:

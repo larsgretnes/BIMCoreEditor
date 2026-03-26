@@ -15,6 +15,8 @@
 #include "io/BcfImporter.h"
 #include "io/GltfImporter.h"
 #include "io/GltfExporter.h"
+#include "io/StlImporter.h" // <--- NEW
+#include "io/StlExporter.h" // <--- NEW
 #include "platform/portable-file-dialogs.h"
 
 namespace BimCore {
@@ -95,11 +97,11 @@ namespace BimCore {
             m_uiSystem.NewFrame();
             bool triggerFocus = false;
 
-            m_uiSystem.Render(m_uiSystem.state, *m_graphics, m_sceneContext.GetDocuments(), *m_camera, m_config.MaxExplodeFactor, triggerFocus, m_input.IsFlightMode(), m_sceneContext.triggerRebuild, &m_commandHistory);
+            m_uiSystem.Render(m_uiSystem.state, *m_graphics, m_sceneContext.GetDocuments(), *m_camera, m_config.MaxExplodeFactor, triggerFocus, m_input.IsFlightMode(), m_sceneContext.triggerRebuild, &m_commandHistory, m_window->GetNativeWindow());
 
             if (m_uiSystem.state.triggerLoad) {
                 m_uiSystem.state.triggerLoad = false;
-                auto fileDialog = pfd::open_file("Select File", m_currentFileDirectory, { "Supported Files", "*.ifc *.gltf *.glb" });
+                auto fileDialog = pfd::open_file("Select File", m_currentFileDirectory, { "Supported Files", "*.ifc *.gltf *.glb *.stl" }); // Added .stl
                 auto files = fileDialog.result();
                 if (!files.empty()) {
                     std::lock_guard<std::mutex> lock(m_loadMutex);
@@ -115,6 +117,7 @@ namespace BimCore {
                 std::string title;
                 if (type == 1) { title = "Import CSV"; filters = { "CSV Files", "*.csv" }; }
                 else if (type == 2) { title = "Import BCF"; filters = { "BCF Zip Files", "*.bcf", "BCF XML Files", "*.bcfxml" }; }
+                else if (type == 3) { title = "Import 3D Model"; filters = { "3D Geometry", "*.gltf *.glb *.stl" }; } // Merged STL & glTF into one filter
 
                 auto fileDialog = pfd::open_file(title, m_currentFileDirectory, filters);
                 auto files = fileDialog.result();
@@ -136,6 +139,23 @@ namespace BimCore {
                         }
                     } else if (type == 2 && !m_sceneContext.GetDocuments().empty()) {
                         BcfImporter::Import(files[0], m_sceneContext.GetDocuments()[0]);
+                    } else if (type == 3) {
+                        std::string path = files[0];
+                        std::string ext = path.substr(path.find_last_of(".") + 1);
+                        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+                        RenderMesh emptyMesh;
+                        auto newDoc = std::make_shared<SceneModel>(nullptr, emptyMesh, path);
+                        
+                        if (ext == "stl") {
+                            StlImporter::Import(path, newDoc);
+                        } else {
+                            GltfImporter::Import(path, newDoc);
+                        }
+
+                        m_sceneContext.AddDocument(newDoc);
+                        m_sceneContext.triggerRebuild = true;
+                        m_uiSystem.state.triggerResetCamera = true;
                     }
                 }
             }
@@ -144,11 +164,18 @@ namespace BimCore {
                 int type = m_uiSystem.state.triggerExport;
                 m_uiSystem.state.triggerExport = 0;
 
-                if (type == 1 && !m_sceneContext.GetDocuments().empty()) {
-                    std::string defaultName = m_currentFileDirectory + "ModelExport.glb";
-                    auto saveDialog = pfd::save_file("Export as glTF", defaultName, { "glTF Binary", "*.glb", "glTF JSON", "*.gltf" });
-                    std::string path = saveDialog.result();
-                    if (!path.empty()) GltfExporter::Export(path, m_sceneContext.GetDocuments()[0]);
+                if (!m_sceneContext.GetDocuments().empty()) {
+                    if (type == 1) {
+                        std::string defaultName = m_currentFileDirectory + "ModelExport.glb";
+                        auto saveDialog = pfd::save_file("Export as glTF", defaultName, { "glTF Binary", "*.glb", "glTF JSON", "*.gltf" });
+                        std::string path = saveDialog.result();
+                        if (!path.empty()) GltfExporter::Export(path, m_sceneContext.GetDocuments()[0]);
+                    } else if (type == 2) {
+                        std::string defaultName = m_currentFileDirectory + "ModelExport.stl";
+                        auto saveDialog = pfd::save_file("Export as STL", defaultName, { "STL Binary", "*.stl" });
+                        std::string path = saveDialog.result();
+                        if (!path.empty()) StlExporter::Export(path, m_sceneContext.GetDocuments()[0]);
+                    }
                 }
             }
 
@@ -197,12 +224,18 @@ namespace BimCore {
             std::string ext = triggerPath.substr(triggerPath.find_last_of(".") + 1);
             std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
-            if (ext == "gltf" || ext == "glb") {
+            if (ext == "gltf" || ext == "glb" || ext == "stl") {
                 RenderMesh emptyMesh;
-                auto newGltfDoc = std::make_shared<SceneModel>(nullptr, emptyMesh, triggerPath);
-                GltfImporter::Import(triggerPath, newGltfDoc);
+                auto newDoc = std::make_shared<SceneModel>(nullptr, emptyMesh, triggerPath);
+                
+                if (ext == "stl") {
+                    StlImporter::Import(triggerPath, newDoc);
+                } else {
+                    GltfImporter::Import(triggerPath, newDoc);
+                }
+                
                 std::lock_guard<std::mutex> lock(m_docMutex);
-                m_pendingDoc = newGltfDoc;
+                m_pendingDoc = newDoc;
             } else {
                 std::thread([this, triggerPath]() {
                     auto doc = IfcLoader::LoadDocument(triggerPath, &m_globalLoadState);

@@ -2,7 +2,7 @@
 // BimCore/apps/editor/EngineConfig.cpp
 // =============================================================================
 #include "core/EngineConfig.h"
-#include <mini/ini.h>  // --- FIXED: Pulled directly from the FetchContent repository ---
+#include <mini/ini.h>  
 #include <iostream>
 
 namespace BimCore {
