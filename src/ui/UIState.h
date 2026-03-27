@@ -19,7 +19,8 @@
 
 namespace BimCore {
 
-    enum class InteractionTool { Select, Move, Rotate };
+    // --- THE FIX: Measure is now a first-class interaction tool ---
+    enum class InteractionTool { Select, Move, Rotate, Measure };
     enum class SnapType { None, Vertex, Edge, Face };
 
     struct Measurement {
@@ -97,9 +98,8 @@ namespace BimCore {
 
         int                             style              = 0;
         
-        // --- NEW: Environment State ---
         uint32_t                        lightingMode       = 0;
-        float                           timeOfDay          = 12.0f; // Default to Noon
+        float                           timeOfDay          = 12.0f; 
 
         glm::vec4                       color              {1.0f, 0.0f, 0.0f, 0.5f};
 
@@ -128,6 +128,7 @@ namespace BimCore {
         int                                          lastClickedVisualIndex = -1;
         std::string                                  lastClickedGroup       = "";
 
+        // Kept as a dummy variable so the Reset function in UIMainPanel doesn't break
         bool                       measureToolActive = false;
 
         std::vector<Measurement>   completedMeasurements;

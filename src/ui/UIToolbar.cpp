@@ -60,7 +60,9 @@ namespace BimCore {
         }
 
         float spacing = ImGui::GetStyle().ItemSpacing.x;
-        float rightButtonGroupWidth = (bigBtnDim * 4.0f) + (spacing * 3.0f);
+        
+        // Adjusted width to account for the Measure button
+        float rightButtonGroupWidth = (bigBtnDim * 5.0f) + (spacing * 4.0f);
         float cursorX = ImGui::GetWindowContentRegionMax().x - rightButtonGroupWidth;
 
         if (cursorX > ImGui::GetCursorPosX()) ImGui::SameLine(cursorX);
@@ -82,7 +84,20 @@ namespace BimCore {
             if (isToolActive) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
             
             if (ImGui::Button(icon, bigBtnSize)) {
-                state.activeTool = tool;
+                // If switching OUT of measure mode, clean up measurements
+                if (state.activeTool == InteractionTool::Measure && tool != InteractionTool::Measure) {
+                    state.completedMeasurements.clear();
+                    state.isMeasuringActive = false;
+                }
+                
+                // If toggling the measure tool OFF by clicking it again, default back to Select
+                if (state.activeTool == tool && tool == InteractionTool::Measure) {
+                    state.activeTool = InteractionTool::Select;
+                    state.completedMeasurements.clear();
+                    state.isMeasuringActive = false;
+                } else {
+                    state.activeTool = tool;
+                }
             }
             
             if (isToolActive) ImGui::PopStyleColor();
@@ -93,21 +108,12 @@ namespace BimCore {
             }
         };
 
-        drawToolBtn(InteractionTool::Select, ICON_FA_MOUSE_POINTER, "Select (1)"); ImGui::SameLine();
-        drawToolBtn(InteractionTool::Move,   ICON_FA_ARROWS_ALT,    "Move (2)", isExploded);   ImGui::SameLine();
-        drawToolBtn(InteractionTool::Rotate, ICON_FA_SYNC,          "Rotate (3)", isExploded); ImGui::SameLine();
-
-        bool isMeasActive = state.measureToolActive;
-        if (isMeasActive) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-        if (ImGui::Button(ICON_FA_RULER, bigBtnSize)) {
-            state.measureToolActive = !state.measureToolActive;
-            if (!state.measureToolActive) {
-                state.completedMeasurements.clear();
-                state.isMeasuringActive = false;
-            }
-        }
-        if (isMeasActive) ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Measure Tool (M)");
+        drawToolBtn(InteractionTool::Select,  ICON_FA_MOUSE_POINTER, "Select (1)"); ImGui::SameLine();
+        drawToolBtn(InteractionTool::Move,    ICON_FA_ARROWS_ALT,    "Move (2)", isExploded);   ImGui::SameLine();
+        drawToolBtn(InteractionTool::Rotate,  ICON_FA_SYNC,          "Rotate (3)", isExploded); ImGui::SameLine();
+        
+        // --- MEASURE TOOL IS NOW AN OFFICIAL MODE ---
+        drawToolBtn(InteractionTool::Measure, ICON_FA_RULER,         "Measure (M)");
 
         ImGui::Spacing();
         if (ImGui::Button(ICON_FA_TIMES_CIRCLE, bigBtnSize)) {
@@ -180,7 +186,6 @@ namespace BimCore {
 
         ImGui::Separator();
 
-        // --- NEW: Environment / Time of Day Control (Only when Realistic mode is on) ---
         if (state.lightingMode == 1) {
             ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.25f, 0.30f, 0.35f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.30f, 0.35f, 0.40f, 1.0f));
@@ -191,7 +196,6 @@ namespace BimCore {
             if (isEnvOpen) {
                 ImGui::SetNextItemWidth(-FLT_MIN);
                 
-                // Format the raw float mathematically into a visually pleasing HH:MM format
                 int hours = static_cast<int>(state.timeOfDay);
                 int mins = static_cast<int>((state.timeOfDay - hours) * 60.0f);
                 char timeStr[32];
