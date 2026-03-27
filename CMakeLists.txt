@@ -13,8 +13,12 @@ set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
 
 add_compile_definitions(BIM_ENABLE_DEBUG_LOG)
 
-# Force binaries to land in build/bin/
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+# --- FIXED: Force binaries to land directly in dist/, bypassing the missing build/bin folder! ---
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/dist)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_SOURCE_DIR}/dist)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_SOURCE_DIR}/dist)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_SOURCE_DIR}/dist)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL ${CMAKE_SOURCE_DIR}/dist)
 
 # ==============================================================================
 # 0. LOCAL SDK CONFIGURATION (WINDOWS RUNTIME DLLS)
@@ -106,23 +110,22 @@ endif()
 # ==============================================================================
 include(FetchContent)
 
+# --- Kill TinyGLTF Bloat (Stops loader_example.exe from compiling) ---
 set(TINYGLTF_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(TINYGLTF_BUILD_LOADER_EXAMPLE OFF CACHE BOOL "" FORCE)
 set(TINYGLTF_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 
 FetchContent_Declare(webgpu GIT_REPOSITORY https://github.com/eliemichel/WebGPU-distribution.git GIT_TAG main)
 FetchContent_Declare(glfw3webgpu GIT_REPOSITORY https://github.com/eliemichel/glfw3webgpu.git GIT_TAG main)
 FetchContent_Declare(imgui_fetch GIT_REPOSITORY https://github.com/ocornut/imgui.git GIT_TAG master)
-
 FetchContent_Declare(nlohmann_json GIT_REPOSITORY https://github.com/nlohmann/json.git GIT_TAG v3.11.3)
 FetchContent_Declare(tinygltf GIT_REPOSITORY https://github.com/syoyo/tinygltf.git GIT_TAG v2.8.3)
 FetchContent_Declare(mini GIT_REPOSITORY https://github.com/pulzed/mINI.git GIT_TAG 0.9.14)
 FetchContent_Declare(imguizmo GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git GIT_TAG master)
-
-# Fetch miniz og pugixml for 3MF støtte
 FetchContent_Declare(miniz GIT_REPOSITORY https://github.com/richgel999/miniz.git GIT_TAG 3.0.2)
 FetchContent_Declare(pugixml GIT_REPOSITORY https://github.com/zeux/pugixml.git GIT_TAG v1.14)
 
-# Vi bruker MakeAvailable for alt
+# Let the libraries build exactly how they want to (no forced static overrides)
 FetchContent_MakeAvailable(webgpu glfw3webgpu imgui_fetch nlohmann_json tinygltf mini imguizmo miniz pugixml)
 
 if(TARGET tinygltf AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -224,9 +227,8 @@ set(DIST_DIR "${CMAKE_SOURCE_DIR}/dist")
 
 add_custom_command(TARGET BIMCoreEditor POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:BIMCoreEditor>" "${DIST_DIR}/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/fa-solid-900.ttf" "${DIST_DIR}/"
-    COMMENT "Publishing pristine build to /dist folder..."
+    COMMENT "Publishing assets and runtimes to /dist folder..."
 )
 
 if(WIN32)
@@ -245,10 +247,23 @@ if(WGPU_LIB)
 endif()
 
 if(WIN32)
+    # 1. Grab miniz (and pugixml if built locally) from the build directory
+    file(GLOB_RECURSE VENDOR_DLLS 
+        "${CMAKE_BINARY_DIR}/*miniz*.dll"
+        "${CMAKE_BINARY_DIR}/*pugixml*.dll"
+    )
+    if(VENDOR_DLLS)
+        add_custom_command(TARGET BIMCoreEditor POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${VENDOR_DLLS} "${DIST_DIR}/"
+        )
+    endif()
+
+    # 2. Grab the exact required engine DLLs from the SDK 
     file(GLOB RUNTIME_DLLS
         "${BIMCORE_SDK_BIN_DIR}/Ifc*.dll"
         "${BIMCORE_SDK_BIN_DIR}/TK*.dll"
         "${BIMCORE_SDK_BIN_DIR}/glfw*.dll"
+        "${BIMCORE_SDK_BIN_DIR}/pugixml*.dll" # <--- Explicitly grabs the SDK's pugixml
     )
     if(RUNTIME_DLLS)
         add_custom_command(TARGET BIMCoreEditor POST_BUILD

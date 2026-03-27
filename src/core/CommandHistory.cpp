@@ -84,5 +84,55 @@ namespace BimCore {
         }
         m_state.hiddenStateChanged = true;
     }
+    // =========================================================================
+    // CmdHide Implementation
+    // =========================================================================
+    CmdHide::CmdHide(SelectionState& state, const std::vector<std::string>& guids, bool hide)
+        : m_state(state), m_guids(guids), m_hide(hide) {}
+
+    void CmdHide::Execute() {
+        m_previouslyHidden.clear();
+        for (const auto& guid : m_guids) {
+            if (m_state.hiddenObjects.count(guid)) m_previouslyHidden.insert(guid);
+            
+            if (m_hide) m_state.hiddenObjects.insert(guid);
+            else m_state.hiddenObjects.erase(guid);
+        }
+        m_state.hiddenStateChanged = true;
+    }
+
+    void CmdHide::Undo() {
+        for (const auto& guid : m_guids) {
+            if (m_previouslyHidden.count(guid)) m_state.hiddenObjects.insert(guid);
+            else m_state.hiddenObjects.erase(guid);
+        }
+        m_state.hiddenStateChanged = true;
+    }
+
+    // =========================================================================
+    // CmdEditProperty Implementation
+    // =========================================================================
+    CmdEditProperty::CmdEditProperty(SelectionState& state, const std::vector<EditData>& edits)
+        : m_state(state), m_edits(edits) {}
+
+    void CmdEditProperty::Execute() {
+        for (const auto& edit : m_edits) {
+            if (edit.newIsDeleted) m_state.deletedProperties[edit.guid].insert(edit.key);
+            else m_state.deletedProperties[edit.guid].erase(edit.key);
+            
+            edit.doc->UpdateElementProperty(edit.guid, edit.key, edit.newVal);
+        }
+        m_state.selectionChanged = true;
+    }
+
+    void CmdEditProperty::Undo() {
+        for (const auto& edit : m_edits) {
+            if (edit.oldWasDeleted) m_state.deletedProperties[edit.guid].insert(edit.key);
+            else m_state.deletedProperties[edit.guid].erase(edit.key);
+            
+            edit.doc->UpdateElementProperty(edit.guid, edit.key, edit.oldVal);
+        }
+        m_state.selectionChanged = true;
+    }
 
 } // namespace BimCore

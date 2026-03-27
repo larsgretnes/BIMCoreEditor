@@ -66,7 +66,7 @@ namespace BimCore {
     };
 
     // -------------------------------------------------------------------------
-    // Concrete Command: Delete/Hide Objects
+    // Concrete Command: Delete Objects
     // -------------------------------------------------------------------------
     class CmdDelete : public ICommand {
     public:
@@ -80,6 +80,48 @@ namespace BimCore {
         std::vector<std::string> m_guids;
         std::unordered_set<std::string> m_previouslyDeleted; 
         std::unordered_set<std::string> m_previouslyHidden;
+    };
+
+    // -------------------------------------------------------------------------
+    // Concrete Command: Hide/Show Objects
+    // -------------------------------------------------------------------------
+    class CmdHide : public ICommand {
+    public:
+        CmdHide(SelectionState& state, const std::vector<std::string>& guids, bool hide);
+        void Execute() override;
+        void Undo() override;
+        std::string GetName() const override { return m_hide ? "Hide Objects" : "Show Objects"; }
+
+    private:
+        SelectionState& m_state;
+        std::vector<std::string> m_guids;
+        bool m_hide;
+        std::unordered_set<std::string> m_previouslyHidden;
+    };
+
+    // -------------------------------------------------------------------------
+    // Concrete Command: Edit Properties
+    // -------------------------------------------------------------------------
+    class CmdEditProperty : public ICommand {
+    public:
+        struct EditData {
+            std::shared_ptr<SceneModel> doc;
+            std::string guid;
+            std::string key;
+            std::string oldVal;
+            std::string newVal;
+            bool oldWasDeleted;
+            bool newIsDeleted;
+        };
+
+        CmdEditProperty(SelectionState& state, const std::vector<EditData>& edits);
+        void Execute() override;
+        void Undo() override;
+        std::string GetName() const override { return "Edit Properties"; }
+
+    private:
+        SelectionState& m_state;
+        std::vector<EditData> m_edits;
     };
 
 } // namespace BimCore

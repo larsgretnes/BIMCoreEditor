@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include "core/Core.h"
+#include "core/CommandHistory.h"
 
 namespace BimCore {
 
@@ -126,15 +127,12 @@ namespace BimCore {
             const bool hNow = window.IsKeyPressed(config.KeyHide);
             if (hNow && !m_hWasDown && !selection.objects.empty()) {
                 bool allHidden = true;
+                std::vector<std::string> targetGuids;
                 for (auto& obj : selection.objects) {
+                    targetGuids.push_back(obj.guid);
                     if (selection.hiddenObjects.count(obj.guid) == 0) allHidden = false;
                 }
-                for (auto& obj : selection.objects) {
-                    if (allHidden) selection.hiddenObjects.erase(obj.guid);
-                    else selection.hiddenObjects.insert(obj.guid);
-                }
-                if (!allHidden) selection.objects.clear();
-                selection.hiddenStateChanged = true;
+                history.ExecuteCommand(std::make_unique<CmdHide>(selection, targetGuids, !allHidden));
             }
             m_hWasDown = hNow;
 

@@ -170,7 +170,15 @@ std::shared_ptr<SceneModel> IfcLoader::LoadDocument(const std::string& filepath,
 
         RenderMesh mesh;
         bool cacheLoaded = false;
-        std::filesystem::path cachePath = safePath.string() + ".bimcache";
+        
+        // --- NEW: Map Cache File to the OS Temp Directory ---
+        std::filesystem::path tempDir = std::filesystem::temp_directory_path();
+        std::string filename = safePath.filename().string();
+        size_t pathHash = std::hash<std::string>{}(filepath); // Hash full path to avoid collisions
+        std::string cacheName = std::to_string(pathHash) + "_" + filename + ".bimcache";
+        std::filesystem::path cachePath = tempDir / cacheName;
+
+        BIM_LOG("IfcLoader", "Using temp cache path: " << cachePath.string());
 
         // --- CACHE READ PHASE ---
         if (std::filesystem::exists(cachePath)) {
@@ -633,7 +641,7 @@ std::shared_ptr<SceneModel> IfcLoader::LoadDocument(const std::string& filepath,
                 std::chrono::duration<double> cacheTime = std::chrono::high_resolution_clock::now() - cacheWriteStart;
                 BIM_LOG("IfcLoader", "[Timing] Cache generation took: " << cacheTime.count() << "s");
             } else {
-                BIM_LOG("IfcLoader", "Warning: Failed to open " << cachePath << " for cache writing.");
+                BIM_LOG("IfcLoader", "Warning: Failed to open " << cachePath.string() << " for cache writing.");
             }
         } // End of if (!cacheLoaded)
 
