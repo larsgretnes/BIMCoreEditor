@@ -2,10 +2,12 @@
 // BimCore/apps/editor/ui/UIPropertiesPanel.cpp
 // =============================================================================
 #include "UIPropertiesPanel.h"
+#include "core/CommandHistory.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <cstdio> // For snprintf
 #include "platform/portable-file-dialogs.h"
 
 #define ICON_FA_SEARCH        "\xef\x80\x82"
@@ -34,7 +36,7 @@ namespace BimCore {
         return nullptr;
     }
 
-    void UIPropertiesPanel::Render(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents, bool& triggerFocus) {
+    void UIPropertiesPanel::Render(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents, bool& triggerFocus, CommandHistory& history) {
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         const float rightPanelWidth = 450.0f;
 
@@ -98,11 +100,9 @@ namespace BimCore {
             ImGui::SameLine();
 
             if (ImGui::Button(hideLabel)) {
-                for (const auto& obj : state.objects) {
-                    if (anyVisible) state.hiddenObjects.insert(obj.guid);
-                    else state.hiddenObjects.erase(obj.guid);
-                }
-                state.hiddenStateChanged = true;
+                std::vector<std::string> targetGuids;
+                for (const auto& obj : state.objects) targetGuids.push_back(obj.guid);
+                history.ExecuteCommand(std::make_unique<CmdHide>(state, targetGuids, anyVisible));
             }
             ImGui::SameLine();
 
@@ -113,20 +113,16 @@ namespace BimCore {
         }
 
         if (deleteAll) {
-            for (const auto& obj : state.objects) {
-                state.deletedObjects.insert(obj.guid);
-                state.hiddenObjects.insert(obj.guid);
-            }
-            state.objects.clear();
-            state.hiddenStateChanged = true;
-            state.selectionChanged = true;
+            std::vector<std::string> toDelete;
+            for (const auto& obj : state.objects) toDelete.push_back(obj.guid);
+            history.ExecuteCommand(std::make_unique<CmdDelete>(state, toDelete));
         } else {
             std::string objToDeleteEntirely = "";
             std::string objToDeselect = "";
             bool globalRefreshNeeded = false;
 
             if (state.objects.size() > 1) {
-                DrawSharedPropertyTable(state, documents, locFilter, sqBtn, globalRefreshNeeded);
+                DrawSharedPropertyTable(state, documents, locFilter, sqBtn, globalRefreshNeeded, history);
                 ImGui::Spacing();
                 ImGui::Separator();
                 ImGui::Spacing();
@@ -172,18 +168,13 @@ namespace BimCore {
 
                     bool isHidden = state.hiddenObjects.count(obj.guid) > 0;
                     if (ImGui::Button(isHidden ? "Show" : "Hide")) {
-                        if (isHidden) {
-                            state.hiddenObjects.erase(obj.guid);
-                        } else {
-                            state.hiddenObjects.insert(obj.guid);
-                            objToDeselect = obj.guid;
-                        }
-                        state.hiddenStateChanged = true;
+                        history.ExecuteCommand(std::make_unique<CmdHide>(state, std::vector<std::string>{obj.guid}, !isHidden));
+                        if (!isHidden) objToDeselect = obj.guid;
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("Delete Entity")) objToDeleteEntirely = obj.guid;
 
-                    DrawPropertyTable(state, obj, documents, locFilter, sqBtn, objNeedsRefresh, propToDelete);
+                    DrawPropertyTable(state, obj, documents, locFilter, sqBtn, objNeedsRefresh, propToDelete, history);
 
                     if (objNeedsRefresh) {
                         auto doc = FindOwnerDocument(obj.guid, documents);
@@ -210,18 +201,13 @@ namespace BimCore {
             }
 
             if (!objToDeleteEntirely.empty()) {
-                state.deletedObjects.insert(objToDeleteEntirely);
-                state.hiddenObjects.insert(objToDeleteEntirely);
-                state.objects.erase(std::remove_if(state.objects.begin(), state.objects.end(),
-                                                   [&](const SelectedObject& o) { return o.guid == objToDeleteEntirely; }), state.objects.end());
-                state.hiddenStateChanged = true;
-                state.selectionChanged = true;
+                history.ExecuteCommand(std::make_unique<CmdDelete>(state, std::vector<std::string>{objToDeleteEntirely}));
             }
         }
         ImGui::End();
     }
 
-    void UIPropertiesPanel::DrawSharedPropertyTable(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents, const std::string& locFilter, const ImVec2& sqBtn, bool& globalRefreshNeeded) {
+    void UIPropertiesPanel::DrawSharedPropertyTable(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents, const std::string& locFilter, const ImVec2& sqBtn, bool& globalRefreshNeeded, CommandHistory& history) {
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.4f, 0.3f, 0.1f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.45f, 0.35f, 0.15f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.5f, 0.4f, 0.2f, 1.0f));
@@ -286,15 +272,18 @@ namespace BimCore {
                             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cancel");
 
                             if (enterPressed || confirmPressed) {
+                                std::vector<CmdEditProperty::EditData> edits;
                                 for (auto& obj : state.objects) {
                                     auto doc = FindOwnerDocument(obj.guid, documents);
                                     if (doc) {
                                         if (state.originalProperties[obj.guid].find(key) == state.originalProperties[obj.guid].end()) {
                                             state.originalProperties[obj.guid][key] = obj.properties[key].value;
                                         }
-                                        doc->UpdateElementProperty(obj.guid, key, state.editBuffer);
+                                        CmdEditProperty::EditData ed{doc, obj.guid, key, obj.properties[key].value, state.editBuffer, false, false};
+                                        edits.push_back(ed);
                                     }
                                 }
+                                history.ExecuteCommand(std::make_unique<CmdEditProperty>(state, edits));
                                 state.activeEditGuid = "";
                                 globalRefreshNeeded = true;
                             }
@@ -306,7 +295,7 @@ namespace BimCore {
                                 if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                                     state.activeEditGuid = "SHARED";
                                     state.activeEditKey = key;
-                                    strncpy(state.editBuffer, sharedVals[key].c_str(), sizeof(state.editBuffer));
+                                    snprintf(state.editBuffer, sizeof(state.editBuffer), "%s", sharedVals[key].c_str());
                                     state.focusEditField = true;
                                 }
                             }
@@ -315,21 +304,23 @@ namespace BimCore {
                             if (ImGui::Button(ICON_FA_EDIT, sqBtn)) {
                                 state.activeEditGuid = "SHARED";
                                 state.activeEditKey = key;
-                                strncpy(state.editBuffer, isMulti[key] ? "" : sharedVals[key].c_str(), sizeof(state.editBuffer));
+                                snprintf(state.editBuffer, sizeof(state.editBuffer), "%s", isMulti[key] ? "" : sharedVals[key].c_str());
                                 state.focusEditField = true;
                             }
                             ImGui::SameLine();
                             if (ImGui::Button(ICON_FA_TRASH, sqBtn)) {
+                                std::vector<CmdEditProperty::EditData> edits;
                                 for (auto& obj : state.objects) {
                                     auto doc = FindOwnerDocument(obj.guid, documents);
                                     if (doc) {
                                         if (state.originalProperties[obj.guid].find(key) == state.originalProperties[obj.guid].end()) {
                                             state.originalProperties[obj.guid][key] = obj.properties[key].value;
                                         }
-                                        state.deletedProperties[obj.guid].insert(key);
-                                        doc->UpdateElementProperty(obj.guid, key, "");
+                                        CmdEditProperty::EditData ed{doc, obj.guid, key, obj.properties[key].value, "", false, true};
+                                        edits.push_back(ed);
                                     }
                                 }
+                                history.ExecuteCommand(std::make_unique<CmdEditProperty>(state, edits));
                                 globalRefreshNeeded = true;
                             }
                         }
@@ -342,7 +333,7 @@ namespace BimCore {
         }
     }
 
-    void UIPropertiesPanel::DrawPropertyTable(SelectionState& state, SelectedObject& obj, std::vector<std::shared_ptr<SceneModel>>& documents, const std::string& locFilter, const ImVec2& sqBtn, bool& objNeedsRefresh, std::string& propToDelete) {
+    void UIPropertiesPanel::DrawPropertyTable(SelectionState& state, SelectedObject& obj, std::vector<std::shared_ptr<SceneModel>>& documents, const std::string& locFilter, const ImVec2& sqBtn, bool& objNeedsRefresh, std::string& propToDelete, CommandHistory& history) {
         if (ImGui::BeginTable("PropTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthStretch, 0.4f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.4f);
@@ -369,34 +360,29 @@ namespace BimCore {
                 ImGui::PushID((obj.guid + key).c_str());
                 if (state.activeEditGuid == obj.guid && state.activeEditKey == key) {
                     if (state.focusEditField) { ImGui::SetKeyboardFocusHere(); state.focusEditField = false; }
-                    if (ImGui::InputText("##edit", state.editBuffer, sizeof(state.editBuffer), ImGuiInputTextFlags_EnterReturnsTrue)) {
-                        auto doc = FindOwnerDocument(obj.guid, documents);
-                        if (doc) {
-                            if (state.originalProperties[obj.guid].find(key) == state.originalProperties[obj.guid].end()) {
-                                state.originalProperties[obj.guid][key] = obj.properties[key].value;
-                            }
-                            doc->UpdateElementProperty(obj.guid, key, state.editBuffer);
-                            state.activeEditGuid = "";
-                            objNeedsRefresh = true;
-                        }
-                    }
-
+                    
+                    bool enterPressed = ImGui::InputText("##edit", state.editBuffer, sizeof(state.editBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
+                    
                     ImGui::TableSetColumnIndex(2);
-                    if (ImGui::Button(ICON_FA_CHECK, sqBtn)) {
-                        auto doc = FindOwnerDocument(obj.guid, documents);
-                        if (doc) {
-                            if (state.originalProperties[obj.guid].find(key) == state.originalProperties[obj.guid].end()) {
-                                state.originalProperties[obj.guid][key] = obj.properties[key].value;
-                            }
-                            doc->UpdateElementProperty(obj.guid, key, state.editBuffer);
-                            state.activeEditGuid = "";
-                            objNeedsRefresh = true;
-                        }
-                    }
+                    bool confirmPressed = ImGui::Button(ICON_FA_CHECK, sqBtn);
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Confirm change");
                     ImGui::SameLine();
                     if (ImGui::Button(ICON_FA_BAN, sqBtn)) { state.activeEditGuid = ""; }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cancel change");
+
+                    if (enterPressed || confirmPressed) {
+                        auto doc = FindOwnerDocument(obj.guid, documents);
+                        if (doc) {
+                            if (state.originalProperties[obj.guid].find(key) == state.originalProperties[obj.guid].end()) {
+                                state.originalProperties[obj.guid][key] = obj.properties[key].value;
+                            }
+                            CmdEditProperty::EditData ed{doc, obj.guid, key, obj.properties[key].value, state.editBuffer, isPropDeleted, false};
+                            history.ExecuteCommand(std::make_unique<CmdEditProperty>(state, std::vector<CmdEditProperty::EditData>{ed}));
+                            
+                            state.activeEditGuid = "";
+                            objNeedsRefresh = true;
+                        }
+                    }
 
                 } else {
                     if (isPropDeleted) {
@@ -406,7 +392,7 @@ namespace BimCore {
                         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                             state.activeEditGuid = obj.guid;
                             state.activeEditKey = key;
-                            strncpy(state.editBuffer, obj.properties[key].value.c_str(), sizeof(state.editBuffer));
+                            snprintf(state.editBuffer, sizeof(state.editBuffer), "%s", obj.properties[key].value.c_str());
                             state.focusEditField = true;
                         }
                     }
@@ -416,8 +402,17 @@ namespace BimCore {
                         if (ImGui::Button(ICON_FA_UNDO, sqBtn)) {
                             auto doc = FindOwnerDocument(obj.guid, documents);
                             if (doc) {
-                                std::string orig = state.originalProperties[obj.guid][key];
-                                doc->UpdateElementProperty(obj.guid, key, orig);
+                                CmdEditProperty::EditData ed;
+                                ed.doc = doc;
+                                ed.guid = obj.guid;
+                                ed.key = key;
+                                ed.oldVal = isPropDeleted ? "" : obj.properties[key].value;
+                                ed.oldWasDeleted = isPropDeleted;
+                                ed.newVal = state.originalProperties[obj.guid][key];
+                                ed.newIsDeleted = false;
+                                
+                                history.ExecuteCommand(std::make_unique<CmdEditProperty>(state, std::vector<CmdEditProperty::EditData>{ed}));
+                                
                                 state.deletedProperties[obj.guid].erase(key);
                                 state.originalProperties[obj.guid].erase(key);
                                 objNeedsRefresh = true;
@@ -432,7 +427,7 @@ namespace BimCore {
                             if (ImGui::Button(ICON_FA_EDIT, sqBtn)) {
                                 state.activeEditGuid = obj.guid;
                                 state.activeEditKey = key;
-                                strncpy(state.editBuffer, obj.properties[key].value.c_str(), sizeof(state.editBuffer));
+                                snprintf(state.editBuffer, sizeof(state.editBuffer), "%s", obj.properties[key].value.c_str());
                                 state.focusEditField = true;
                             }
                             ImGui::SameLine();
@@ -452,9 +447,9 @@ namespace BimCore {
                 if (state.originalProperties[obj.guid].find(propToDelete) == state.originalProperties[obj.guid].end()) {
                     state.originalProperties[obj.guid][propToDelete] = obj.properties[propToDelete].value;
                 }
-                state.deletedProperties[obj.guid].insert(propToDelete);
-                doc->UpdateElementProperty(obj.guid, propToDelete, "");
-                obj.properties.erase(propToDelete);
+                CmdEditProperty::EditData ed{doc, obj.guid, propToDelete, obj.properties[propToDelete].value, "", false, true};
+                history.ExecuteCommand(std::make_unique<CmdEditProperty>(state, std::vector<CmdEditProperty::EditData>{ed}));
+                
                 objNeedsRefresh = true;
             }
         }

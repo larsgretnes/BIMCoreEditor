@@ -30,7 +30,10 @@ namespace BimCore {
         UIMainPanel::Render(state, documents, configMaxExplode, triggerFocus, triggerRebuild, &camera, *history, window);
         
         m_overlay.RenderStatusPanel(state, documents);
-        m_propertiesPanel.Render(state, documents, triggerFocus);
+        
+        // Pass the history object to the properties panel so the Undo/Redo stack can track edits and visibility
+        m_propertiesPanel.Render(state, documents, triggerFocus, *history);
+        
         m_overlay.RenderContextMenu(state, triggerFocus);
 
         if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !editingActiveAtStartOfFrame) {

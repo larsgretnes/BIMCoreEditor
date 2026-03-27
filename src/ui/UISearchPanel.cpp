@@ -1,458 +1,241 @@
 // =============================================================================
-// BimCore/apps/editor/ui/UIPropertiesPanel.cpp
+// BimCore/apps/editor/ui/UISearchPanel.cpp
 // =============================================================================
-#include "UIPropertiesPanel.h"
-#include "core/CommandHistory.h"
+#include "UISearchPanel.h"
 #include <imgui.h>
+#include <string>
 #include <algorithm>
 #include <cctype>
 #include <fstream>
-#include <cstdio> // For snprintf
+#include <vector>
+#include <set>
 #include "platform/portable-file-dialogs.h"
-
-#define ICON_FA_SEARCH        "\xef\x80\x82"
-#define ICON_FA_DOWNLOAD      "\xef\x80\x99"
-#define ICON_FA_CHECK         "\xef\x80\x8c"
-#define ICON_FA_BAN           "\xef\x81\x9e"
-#define ICON_FA_EDIT          "\xef\x8c\x83"
-#define ICON_FA_TRASH         "\xef\x80\x8d"
-#define ICON_FA_UNDO          "\xef\x80\x9e"
 
 namespace BimCore {
 
-    static bool icontains(const std::string& str, const std::string& query) {
-        if (query.empty()) return true;
-        auto it = std::search(str.begin(), str.end(), query.begin(), query.end(),
-                              [](unsigned char ch1, unsigned char ch2) { return std::tolower(ch1) == std::tolower(ch2); });
-        return it != str.end();
-    }
-
-    std::shared_ptr<SceneModel> UIPropertiesPanel::FindOwnerDocument(const std::string& guid, const std::vector<std::shared_ptr<SceneModel>>& documents) {
-        for (auto& doc : documents) {
-            for (const auto& sub : doc->GetGeometry().subMeshes) {
-                if (sub.guid == guid) return doc;
-            }
-        }
-        return nullptr;
-    }
-
-    void UIPropertiesPanel::Render(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents, bool& triggerFocus, CommandHistory& history) {
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        const float rightPanelWidth = 450.0f;
-
-        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x, viewport->WorkPos.y), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
-        ImGui::SetNextWindowSizeConstraints(ImVec2(300, viewport->WorkSize.y), ImVec2(viewport->WorkSize.x / 2.0f, viewport->WorkSize.y));
-        ImGui::SetNextWindowSize(ImVec2(rightPanelWidth, viewport->WorkSize.y), ImGuiCond_FirstUseEver);
-
-        ImGui::Begin("Properties", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove);
-
-        if (state.objects.empty()) {
-            ImGui::TextDisabled("Select an element to view properties.");
-            ImGui::End();
-            return;
-        }
-
-        float exportBtnWidth = 110.0f;
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - exportBtnWidth - ImGui::GetStyle().ItemSpacing.x);
-        ImGui::InputTextWithHint("##locSearch", ICON_FA_SEARCH " Filter Properties...", state.localSearchBuf, sizeof(state.localSearchBuf));
-
-        ImGui::SameLine();
-        if (ImGui::Button(ICON_FA_DOWNLOAD " Export CSV", ImVec2(exportBtnWidth, 0))) {
-            auto fd = pfd::save_file("Export Selection", "Selection_Properties.csv", { "CSV Files", "*.csv" });
-            std::string path = fd.result();
-            if (!path.empty()) {
-                std::ofstream out(path);
-                out << "GUID,Type,Property,Value\n";
-                for (const auto& obj : state.objects) {
-                    for (const auto& [k, v] : obj.properties) {
-                        out << obj.guid << "," << obj.type << ",\"" << k << "\",\"" << v.value << "\"\n";
-                    }
-                }
-            }
-        }
-        std::string locFilter = state.localSearchBuf;
-        ImGui::Separator();
-
-        bool deleteAll = false;
-        ImVec2 sqBtn(ImGui::GetFrameHeight(), ImGui::GetFrameHeight());
-
-        if (state.objects.size() > 1) {
-            bool anyVisible = false;
-            for (const auto& obj : state.objects) {
-                if (state.hiddenObjects.count(obj.guid) == 0) { anyVisible = true; break; }
-            }
-            const char* hideLabel = anyVisible ? "Hide All" : "Show All";
-
-            float btnW1 = ImGui::CalcTextSize("Focus All").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-            float btnW2 = ImGui::CalcTextSize(hideLabel).x + ImGui::GetStyle().FramePadding.x * 2.0f;
-            float btnW3 = ImGui::CalcTextSize("Delete All").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-            float spacing = ImGui::GetStyle().ItemSpacing.x;
-            float totalW = btnW1 + btnW2 + btnW3 + (spacing * 2.0f);
-
-            float cx = (ImGui::GetWindowContentRegionMax().x - totalW) * 0.5f;
-            if (cx > 0) ImGui::SetCursorPosX(cx);
-
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.4f, 0.3f, 0.1f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.45f, 0.35f, 0.15f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.5f, 0.4f, 0.2f, 1.0f));
-
-            if (ImGui::Button("Focus All")) { triggerFocus = true; }
-            ImGui::SameLine();
-
-            if (ImGui::Button(hideLabel)) {
-                std::vector<std::string> targetGuids;
-                for (const auto& obj : state.objects) targetGuids.push_back(obj.guid);
-                history.ExecuteCommand(std::make_unique<CmdHide>(state, targetGuids, anyVisible));
-            }
-            ImGui::SameLine();
-
-            if (ImGui::Button("Delete All")) { deleteAll = true; }
-
-            ImGui::PopStyleColor(3);
-            ImGui::Separator();
-        }
-
-        if (deleteAll) {
-            std::vector<std::string> toDelete;
-            for (const auto& obj : state.objects) toDelete.push_back(obj.guid);
-            history.ExecuteCommand(std::make_unique<CmdDelete>(state, toDelete));
-        } else {
-            std::string objToDeleteEntirely = "";
-            std::string objToDeselect = "";
-            bool globalRefreshNeeded = false;
-
-            if (state.objects.size() > 1) {
-                DrawSharedPropertyTable(state, documents, locFilter, sqBtn, globalRefreshNeeded, history);
-                ImGui::Spacing();
-                ImGui::Separator();
-                ImGui::Spacing();
-            }
-
-            if (globalRefreshNeeded) {
-                for (auto& obj : state.objects) {
-                    auto doc = FindOwnerDocument(obj.guid, documents);
-                    if (doc) {
-                        obj.properties = doc->GetElementProperties(obj.guid);
-                        if (obj.properties.count("Name") && !obj.properties["Name"].value.empty()) {
-                            state.cachedNames[obj.guid] = obj.properties["Name"].value;
-                        }
-                    }
-                }
-            }
-
-            ImGui::TextDisabled("Selected Elements");
-            ImGui::Spacing();
-            ImGui::BeginChild("SelectionList", ImVec2(0, 0), true);
-
-            for (auto& obj : state.objects) {
-                std::string shortGuid = obj.guid.length() >= 8 ? obj.guid.substr(obj.guid.length() - 8) : obj.guid;
-                std::string headerName = obj.type;
-                if (state.cachedNames.count(obj.guid)) headerName = state.cachedNames[obj.guid];
-
-                std::string treeId = obj.guid + "_tree";
-
-                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.15f, 0.3f, 0.45f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.2f, 0.35f, 0.5f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.4f, 0.55f, 1.0f));
-
-                ImGuiTreeNodeFlags nodeFlags = (state.objects.size() == 1 || !locFilter.empty()) ? ImGuiTreeNodeFlags_DefaultOpen : 0;
-                bool isObjOpen = ImGui::TreeNodeEx(treeId.c_str(), nodeFlags | ImGuiTreeNodeFlags_Framed, "%s [%s]", headerName.c_str(), shortGuid.c_str());
-                ImGui::PopStyleColor(3);
-
-                if (isObjOpen) {
-                    bool objNeedsRefresh = false;
-                    std::string propToDelete = "";
-
-                    if (ImGui::Button("Focus")) triggerFocus = true;
-                    ImGui::SameLine();
-
-                    bool isHidden = state.hiddenObjects.count(obj.guid) > 0;
-                    if (ImGui::Button(isHidden ? "Show" : "Hide")) {
-                        history.ExecuteCommand(std::make_unique<CmdHide>(state, std::vector<std::string>{obj.guid}, !isHidden));
-                        if (!isHidden) objToDeselect = obj.guid;
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Delete Entity")) objToDeleteEntirely = obj.guid;
-
-                    DrawPropertyTable(state, obj, documents, locFilter, sqBtn, objNeedsRefresh, propToDelete, history);
-
-                    if (objNeedsRefresh) {
-                        auto doc = FindOwnerDocument(obj.guid, documents);
-                        if (doc) {
-                            obj.properties = doc->GetElementProperties(obj.guid);
-                            if (obj.properties.count("Name") && !obj.properties["Name"].value.empty()) {
-                                state.cachedNames[obj.guid] = obj.properties["Name"].value;
-                            } else {
-                                state.cachedNames[obj.guid] = obj.type;
-                            }
-                        }
-                    }
-
-                    ImGui::TreePop();
-                }
-            }
-
-            ImGui::EndChild();
-
-            if (!objToDeselect.empty()) {
-                state.objects.erase(std::remove_if(state.objects.begin(), state.objects.end(),
-                                                   [&](const SelectedObject& o) { return o.guid == objToDeselect; }), state.objects.end());
-                state.selectionChanged = true;
-            }
-
-            if (!objToDeleteEntirely.empty()) {
-                history.ExecuteCommand(std::make_unique<CmdDelete>(state, std::vector<std::string>{objToDeleteEntirely}));
-            }
-        }
-        ImGui::End();
-    }
-
-    void UIPropertiesPanel::DrawSharedPropertyTable(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents, const std::string& locFilter, const ImVec2& sqBtn, bool& globalRefreshNeeded, CommandHistory& history) {
-        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.4f, 0.3f, 0.1f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.45f, 0.35f, 0.15f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.5f, 0.4f, 0.2f, 1.0f));
-        bool isSharedOpen = ImGui::TreeNodeEx("Shared Properties", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed);
+    void UISearchPanel::Render(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents, bool& triggerFocus) {
+        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.25f, 0.30f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.30f, 0.35f, 0.40f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.35f, 0.40f, 0.45f, 1.0f));
+        bool isOpen = ImGui::CollapsingHeader("Search & Select", ImGuiTreeNodeFlags_DefaultOpen);
         ImGui::PopStyleColor(3);
 
-        if (isSharedOpen) {
-            std::vector<std::string> sharedKeys;
-            std::map<std::string, std::string> sharedVals;
-            std::map<std::string, bool> isMulti;
+        if (isOpen) {
+            // --- 1. Text Search ---
+            ImGui::TextDisabled("Text Search");
+            
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 60.0f);
+            bool doTextSearch = ImGui::InputTextWithHint("##globalsearch", "Search Name, Type, GUID...", state.globalSearchBuf, sizeof(state.globalSearchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::SameLine();
+            if (ImGui::Button("Find", ImVec2(55, 0))) doTextSearch = true;
 
-            bool first = true;
-            for (const auto& obj : state.objects) {
-                if (first) {
-                    for (const auto& [k, v] : obj.properties) {
-                        sharedKeys.push_back(k);
-                        sharedVals[k] = v.value;
-                        isMulti[k] = false;
-                    }
-                    first = false;
-                } else {
-                    for (auto it = sharedKeys.begin(); it != sharedKeys.end(); ) {
-                        if (obj.properties.find(*it) == obj.properties.end()) {
-                            it = sharedKeys.erase(it);
-                        } else {
-                            if (sharedVals[*it] != obj.properties.at(*it).value) {
-                                isMulti[*it] = true;
-                            }
-                            ++it;
-                        }
-                    }
-                }
-            }
+            if (doTextSearch) {
+                state.objects.clear();
+                std::string query = state.globalSearchBuf;
+                std::transform(query.begin(), query.end(), query.begin(), ::tolower);
 
-            if (sharedKeys.empty()) {
-                ImGui::TextDisabled("No shared properties found.");
-            } else {
-                if (ImGui::BeginTable("SharedPropTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-                    ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthStretch, 0.4f);
-                    ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.4f);
-                    ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 65.0f);
+                if (!query.empty()) {
+                    for (auto& doc : documents) {
+                        if (doc->IsHidden()) continue;
+                        const auto& geom = doc->GetGeometry();
+                        for (const auto& sub : geom.subMeshes) {
+                            if (state.hiddenObjects.count(sub.guid)) continue;
 
-                    for (const auto& key : sharedKeys) {
-                        if (!locFilter.empty() && !icontains(key, locFilter) && !icontains(sharedVals[key], locFilter)) continue;
-
-                        ImGui::TableNextRow();
-                        ImGui::TableSetColumnIndex(0); ImGui::TextWrapped("%s", key.c_str());
-                        ImGui::TableSetColumnIndex(1);
-
-                        ImGui::PushID(("Shared_" + key).c_str());
-                        if (state.activeEditGuid == "SHARED" && state.activeEditKey == key) {
-                            if (state.focusEditField) { ImGui::SetKeyboardFocusHere(); state.focusEditField = false; }
-
-                            bool enterPressed = ImGui::InputText("##edit", state.editBuffer, sizeof(state.editBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
-
-                            ImGui::TableSetColumnIndex(2);
-                            bool confirmPressed = ImGui::Button(ICON_FA_CHECK, sqBtn);
-                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Apply to all selected");
-
-                            ImGui::SameLine();
-                            if (ImGui::Button(ICON_FA_BAN, sqBtn)) { state.activeEditGuid = ""; }
-                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cancel");
-
-                            if (enterPressed || confirmPressed) {
-                                std::vector<CmdEditProperty::EditData> edits;
-                                for (auto& obj : state.objects) {
-                                    auto doc = FindOwnerDocument(obj.guid, documents);
-                                    if (doc) {
-                                        if (state.originalProperties[obj.guid].find(key) == state.originalProperties[obj.guid].end()) {
-                                            state.originalProperties[obj.guid][key] = obj.properties[key].value;
-                                        }
-                                        CmdEditProperty::EditData ed{doc, obj.guid, key, obj.properties[key].value, state.editBuffer, false, false};
-                                        edits.push_back(ed);
-                                    }
-                                }
-                                history.ExecuteCommand(std::make_unique<CmdEditProperty>(state, edits));
-                                state.activeEditGuid = "";
-                                globalRefreshNeeded = true;
-                            }
-                        } else {
-                            if (isMulti[key]) {
-                                ImGui::TextDisabled("<Multiple Values>");
-                            } else {
-                                ImGui::TextWrapped("%s", sharedVals[key].c_str());
-                                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                                    state.activeEditGuid = "SHARED";
-                                    state.activeEditKey = key;
-                                    snprintf(state.editBuffer, sizeof(state.editBuffer), "%s", sharedVals[key].c_str());
-                                    state.focusEditField = true;
-                                }
-                            }
-
-                            ImGui::TableSetColumnIndex(2);
-                            if (ImGui::Button(ICON_FA_EDIT, sqBtn)) {
-                                state.activeEditGuid = "SHARED";
-                                state.activeEditKey = key;
-                                snprintf(state.editBuffer, sizeof(state.editBuffer), "%s", isMulti[key] ? "" : sharedVals[key].c_str());
-                                state.focusEditField = true;
-                            }
-                            ImGui::SameLine();
-                            if (ImGui::Button(ICON_FA_TRASH, sqBtn)) {
-                                std::vector<CmdEditProperty::EditData> edits;
-                                for (auto& obj : state.objects) {
-                                    auto doc = FindOwnerDocument(obj.guid, documents);
-                                    if (doc) {
-                                        if (state.originalProperties[obj.guid].find(key) == state.originalProperties[obj.guid].end()) {
-                                            state.originalProperties[obj.guid][key] = obj.properties[key].value;
-                                        }
-                                        CmdEditProperty::EditData ed{doc, obj.guid, key, obj.properties[key].value, "", false, true};
-                                        edits.push_back(ed);
-                                    }
-                                }
-                                history.ExecuteCommand(std::make_unique<CmdEditProperty>(state, edits));
-                                globalRefreshNeeded = true;
-                            }
-                        }
-                        ImGui::PopID();
-                    }
-                    ImGui::EndTable();
-                }
-            }
-            ImGui::TreePop();
-        }
-    }
-
-    void UIPropertiesPanel::DrawPropertyTable(SelectionState& state, SelectedObject& obj, std::vector<std::shared_ptr<SceneModel>>& documents, const std::string& locFilter, const ImVec2& sqBtn, bool& objNeedsRefresh, std::string& propToDelete, CommandHistory& history) {
-        if (ImGui::BeginTable("PropTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthStretch, 0.4f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.4f);
-            ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 65.0f);
-
-            std::vector<std::string> allKeys;
-            for (auto& [k, v] : obj.properties) allKeys.push_back(k);
-            for (auto& k : state.deletedProperties[obj.guid]) {
-                if (std::find(allKeys.begin(), allKeys.end(), k) == allKeys.end()) allKeys.push_back(k);
-            }
-
-            for (auto& key : allKeys) {
-                if (!locFilter.empty() && !icontains(key, locFilter) && !icontains(obj.properties[key].value, locFilter)) continue;
-
-                bool isPropDeleted = state.deletedProperties[obj.guid].count(key) > 0;
-                bool isPropEdited  = !isPropDeleted && state.originalProperties[obj.guid].count(key) > 0 && state.originalProperties[obj.guid][key] != obj.properties[key].value;
-
-                ImGui::TableNextRow();
-
-                if (isPropDeleted) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-                ImGui::TableSetColumnIndex(0); ImGui::TextWrapped("%s", key.c_str());
-                ImGui::TableSetColumnIndex(1);
-
-                ImGui::PushID((obj.guid + key).c_str());
-                if (state.activeEditGuid == obj.guid && state.activeEditKey == key) {
-                    if (state.focusEditField) { ImGui::SetKeyboardFocusHere(); state.focusEditField = false; }
-                    
-                    bool enterPressed = ImGui::InputText("##edit", state.editBuffer, sizeof(state.editBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
-                    
-                    ImGui::TableSetColumnIndex(2);
-                    bool confirmPressed = ImGui::Button(ICON_FA_CHECK, sqBtn);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Confirm change");
-                    ImGui::SameLine();
-                    if (ImGui::Button(ICON_FA_BAN, sqBtn)) { state.activeEditGuid = ""; }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cancel change");
-
-                    if (enterPressed || confirmPressed) {
-                        auto doc = FindOwnerDocument(obj.guid, documents);
-                        if (doc) {
-                            if (state.originalProperties[obj.guid].find(key) == state.originalProperties[obj.guid].end()) {
-                                state.originalProperties[obj.guid][key] = obj.properties[key].value;
-                            }
-                            CmdEditProperty::EditData ed{doc, obj.guid, key, obj.properties[key].value, state.editBuffer, isPropDeleted, false};
-                            history.ExecuteCommand(std::make_unique<CmdEditProperty>(state, std::vector<CmdEditProperty::EditData>{ed}));
+                            std::string bg = sub.guid.length() >= 22 ? sub.guid.substr(0, 22) : sub.guid;
+                            std::string bgLower = bg;
+                            std::transform(bgLower.begin(), bgLower.end(), bgLower.begin(), ::tolower);
                             
-                            state.activeEditGuid = "";
-                            objNeedsRefresh = true;
-                        }
-                    }
+                            std::string typeLower = sub.type;
+                            std::transform(typeLower.begin(), typeLower.end(), typeLower.begin(), ::tolower);
+                            
+                            auto props = doc->GetElementProperties(bg);
+                            bool match = false;
 
-                } else {
-                    if (isPropDeleted) {
-                        ImGui::TextWrapped("<Deleted>");
-                    } else {
-                        ImGui::TextWrapped("%s", obj.properties[key].value.c_str());
-                        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                            state.activeEditGuid = obj.guid;
-                            state.activeEditKey = key;
-                            snprintf(state.editBuffer, sizeof(state.editBuffer), "%s", obj.properties[key].value.c_str());
-                            state.focusEditField = true;
-                        }
-                    }
+                            if (bgLower.find(query) != std::string::npos || typeLower.find(query) != std::string::npos) {
+                                match = true;
+                            } else {
+                                for (const auto& [k, prop] : props) {
+                                    std::string valLower = prop.value; 
+                                    std::transform(valLower.begin(), valLower.end(), valLower.begin(), ::tolower);
+                                    if (valLower.find(query) != std::string::npos) {
+                                        match = true;
+                                        break;
+                                    }
+                                }
+                            }
 
-                    ImGui::TableSetColumnIndex(2);
-                    if (isPropEdited || isPropDeleted) {
-                        if (ImGui::Button(ICON_FA_UNDO, sqBtn)) {
-                            auto doc = FindOwnerDocument(obj.guid, documents);
-                            if (doc) {
-                                CmdEditProperty::EditData ed;
-                                ed.doc = doc;
-                                ed.guid = obj.guid;
-                                ed.key = key;
-                                ed.oldVal = isPropDeleted ? "" : obj.properties[key].value;
-                                ed.oldWasDeleted = isPropDeleted;
-                                ed.newVal = state.originalProperties[obj.guid][key];
-                                ed.newIsDeleted = false;
-                                
-                                history.ExecuteCommand(std::make_unique<CmdEditProperty>(state, std::vector<CmdEditProperty::EditData>{ed}));
-                                
-                                state.deletedProperties[obj.guid].erase(key);
-                                state.originalProperties[obj.guid].erase(key);
-                                objNeedsRefresh = true;
+                            if (match) {
+                                SelectedObject so;
+                                so.guid = sub.guid;
+                                so.type = sub.type;
+                                so.startIndex = sub.globalStartIndex;
+                                so.indexCount = sub.indexCount;
+                                so.properties = props;
+                                state.objects.push_back(so);
                             }
                         }
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Undo edit/delete");
-                        if (!isPropDeleted) ImGui::SameLine();
-                    }
-
-                    if (!isPropDeleted) {
-                        if (!isPropEdited) {
-                            if (ImGui::Button(ICON_FA_EDIT, sqBtn)) {
-                                state.activeEditGuid = obj.guid;
-                                state.activeEditKey = key;
-                                snprintf(state.editBuffer, sizeof(state.editBuffer), "%s", obj.properties[key].value.c_str());
-                                state.focusEditField = true;
-                            }
-                            ImGui::SameLine();
-                        }
-                        if (ImGui::Button(ICON_FA_TRASH, sqBtn)) { propToDelete = key; }
                     }
                 }
-                ImGui::PopID();
-                if (isPropDeleted) ImGui::PopStyleColor();
+                state.selectionChanged = true;
+                if (!state.objects.empty()) triggerFocus = true;
             }
-            ImGui::EndTable();
-        }
 
-        if (!propToDelete.empty()) {
-            auto doc = FindOwnerDocument(obj.guid, documents);
-            if (doc) {
-                if (state.originalProperties[obj.guid].find(propToDelete) == state.originalProperties[obj.guid].end()) {
-                    state.originalProperties[obj.guid][propToDelete] = obj.properties[propToDelete].value;
+            // --- Dynamic CSV Export ---
+            if (!state.objects.empty()) {
+                ImGui::Spacing();
+                if (ImGui::Button("Export Results to CSV", ImVec2(-FLT_MIN, 0))) {
+                    auto saveDialog = pfd::save_file("Export Search Results", "SearchResults.csv", { "CSV Files", "*.csv" });
+                    std::string path = saveDialog.result();
+                    
+                    if (!path.empty()) {
+                        std::ofstream out(path);
+
+                        auto escapeCSV = [](const std::string& val) {
+                            std::string res = val;
+                            size_t pos = 0;
+                            while ((pos = res.find('"', pos)) != std::string::npos) {
+                                res.replace(pos, 1, "\"\"");
+                                pos += 2;
+                            }
+                            return "\"" + res + "\"";
+                        };
+
+                        std::vector<std::string> customProps;
+                        std::set<std::string> seenProps;
+                        for (const auto& obj : state.objects) {
+                            for (const auto& [key, prop] : obj.properties) {
+                                if (key != "Name" && seenProps.find(key) == seenProps.end()) {
+                                    seenProps.insert(key);
+                                    customProps.push_back(key);
+                                }
+                            }
+                        }
+                        
+                        std::sort(customProps.begin(), customProps.end());
+
+                        out << "GUID,Type,Name";
+                        for (const auto& key : customProps) {
+                            out << "," << escapeCSV(key);
+                        }
+                        out << "\n";
+
+                        for (const auto& obj : state.objects) {
+                            std::string name = obj.properties.count("Name") ? obj.properties.at("Name").value : "";
+                            out << escapeCSV(obj.guid) << "," << escapeCSV(obj.type) << "," << escapeCSV(name);
+                            
+                            for (const auto& key : customProps) {
+                                if (obj.properties.count(key)) {
+                                    out << "," << escapeCSV(obj.properties.at(key).value);
+                                } else {
+                                    out << ","; 
+                                }
+                            }
+                            out << "\n";
+                        }
+                        out.close();
+                    }
                 }
-                CmdEditProperty::EditData ed{doc, obj.guid, propToDelete, obj.properties[propToDelete].value, "", false, true};
-                history.ExecuteCommand(std::make_unique<CmdEditProperty>(state, std::vector<CmdEditProperty::EditData>{ed}));
+            }
+
+            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+
+            // --- 2. Spatial Search ---
+            ImGui::TextDisabled("Spatial Search");
+            
+            if (state.objects.empty()) {
+                ImGui::TextWrapped("Select one or more elements first to use their combined bounding box for a spatial search.");
+            } else {
+                static int spatialMode = 1; 
+                static bool invertSpatial = false;
                 
-                objNeedsRefresh = true;
+                ImGui::RadioButton("Inside Box", &spatialMode, 0); ImGui::SameLine();
+                ImGui::RadioButton("Touching Box", &spatialMode, 1);
+                ImGui::Checkbox("Invert Selection Result", &invertSpatial);
+
+                if (ImGui::Button("Execute Spatial Search", ImVec2(-FLT_MIN, 0))) {
+                    
+                    float tMin[3] = { 1e9f, 1e9f, 1e9f };
+                    float tMax[3] = {-1e9f,-1e9f,-1e9f };
+                    bool hasTarget = false;
+
+                    for (auto& doc : documents) {
+                        const auto& geom = doc->GetGeometry();
+                        for (const auto& obj : state.objects) {
+                            for (const auto& sub : geom.subMeshes) {
+                                if (sub.guid == obj.guid) {
+                                    for(uint32_t i = 0; i < sub.indexCount; ++i) {
+                                        const float* p = geom.vertices[geom.indices[sub.startIndex + i]].position;
+                                        for(int j=0; j<3; ++j) {
+                                            if(p[j] < tMin[j]) tMin[j] = p[j];
+                                            if(p[j] > tMax[j]) tMax[j] = p[j];
+                                        }
+                                    }
+                                    hasTarget = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (hasTarget) {
+                        std::vector<SelectedObject> newSelection;
+                        
+                        for (auto& doc : documents) {
+                            if (doc->IsHidden()) continue;
+                            const auto& geom = doc->GetGeometry();
+
+                            for (const auto& sub : geom.subMeshes) {
+                                if (state.hiddenObjects.count(sub.guid)) continue;
+                                if (!state.showOpeningsAndSpaces && (sub.type == "IfcOpeningElement" || sub.type == "IfcSpace")) continue;
+
+                                float sMin[3] = { 1e9f, 1e9f, 1e9f };
+                                float sMax[3] = {-1e9f,-1e9f,-1e9f };
+
+                                if (!geom.bvhNodes.empty() && sub.bvhRootIndex < geom.bvhNodes.size()) {
+                                    const auto& node = geom.bvhNodes[sub.bvhRootIndex];
+                                    for(int j=0; j<3; ++j) { sMin[j] = node.aabbMin[j]; sMax[j] = node.aabbMax[j]; }
+                                } else {
+                                    for(uint32_t i = 0; i < sub.indexCount; ++i) {
+                                        const float* p = geom.vertices[geom.indices[sub.startIndex + i]].position;
+                                        for(int j=0; j<3; ++j) {
+                                            if(p[j] < sMin[j]) sMin[j] = p[j];
+                                            if(p[j] > sMax[j]) sMax[j] = p[j];
+                                        }
+                                    }
+                                }
+
+                                bool match = false;
+                                if (spatialMode == 0) { 
+                                    match = (sMin[0] >= tMin[0] && sMax[0] <= tMax[0] &&
+                                             sMin[1] >= tMin[1] && sMax[1] <= tMax[1] &&
+                                             sMin[2] >= tMin[2] && sMax[2] <= tMax[2]);
+                                } else { 
+                                    match = (sMin[0] <= tMax[0] && sMax[0] >= tMin[0] &&
+                                             sMin[1] <= tMax[1] && sMax[1] >= tMin[1] &&
+                                             sMin[2] <= tMax[2] && sMax[2] >= tMin[2]);
+                                }
+
+                                if (invertSpatial) match = !match;
+
+                                if (match) {
+                                    SelectedObject so;
+                                    so.guid = sub.guid;
+                                    so.type = sub.type;
+                                    so.startIndex = sub.globalStartIndex;
+                                    so.indexCount = sub.indexCount;
+                                    std::string bg = sub.guid.length() >= 22 ? sub.guid.substr(0, 22) : sub.guid;
+                                    so.properties = doc->GetElementProperties(bg);
+                                    newSelection.push_back(so);
+                                }
+                            }
+                        }
+                        
+                        state.objects = newSelection;
+                        state.selectionChanged = true;
+                        if (!state.objects.empty()) triggerFocus = true;
+                    }
+                }
             }
         }
     }
-
 } // namespace BimCore
