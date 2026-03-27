@@ -247,7 +247,6 @@ if(WGPU_LIB)
 endif()
 
 if(WIN32)
-    # 1. Grab miniz (and pugixml if built locally) from the build directory
     file(GLOB_RECURSE VENDOR_DLLS 
         "${CMAKE_BINARY_DIR}/*miniz*.dll"
         "${CMAKE_BINARY_DIR}/*pugixml*.dll"
@@ -258,12 +257,11 @@ if(WIN32)
         )
     endif()
 
-    # 2. Grab the exact required engine DLLs from the SDK 
     file(GLOB RUNTIME_DLLS
         "${BIMCORE_SDK_BIN_DIR}/Ifc*.dll"
         "${BIMCORE_SDK_BIN_DIR}/TK*.dll"
         "${BIMCORE_SDK_BIN_DIR}/glfw*.dll"
-        "${BIMCORE_SDK_BIN_DIR}/pugixml*.dll" # <--- Explicitly grabs the SDK's pugixml
+        "${BIMCORE_SDK_BIN_DIR}/pugixml*.dll" 
     )
     if(RUNTIME_DLLS)
         add_custom_command(TARGET BIMCoreEditor POST_BUILD
@@ -271,3 +269,57 @@ if(WIN32)
         )
     endif()
 endif()
+
+# ==============================================================================
+# 7. AUTOMATED TESTING SUITE (Catch2 v3)
+# ==============================================================================
+# Fetch the modern Catch2 testing framework securely
+FetchContent_Declare(
+  Catch2
+  GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+  GIT_TAG        v3.5.2
+)
+FetchContent_MakeAvailable(Catch2)
+
+enable_testing()
+
+# We need the tests to compile against the engine's source code, BUT we cannot
+# compile main.cpp twice. We create a copy of the source list and remove main.
+set(TEST_SOURCES ${APP_SOURCES})
+list(REMOVE_ITEM TEST_SOURCES "src/core/main.cpp")
+
+# Automatically find ALL test files in the tests/ directory!
+file(GLOB TEST_FILES "tests/*.cpp")
+
+# Create the dedicated test runner executable
+add_executable(BimCoreTests 
+    ${TEST_FILES} 
+    ${TEST_SOURCES}
+)
+
+# Provide the exact same headers the engine uses
+target_include_directories(BimCoreTests PRIVATE 
+    src 
+    "${GLM_INCLUDE_DIR}" 
+    "${mini_SOURCE_DIR}/src"
+)
+target_include_directories(BimCoreTests SYSTEM PRIVATE 
+    "${tinygltf_SOURCE_DIR}"
+)
+
+# Link Catch2 (which magically provides our main() function) alongside the engine libs
+target_link_libraries(BimCoreTests PRIVATE 
+    Catch2::Catch2WithMain
+    imgui glfw webgpu glfw3webgpu
+    IfcOpenShell::IfcParse IfcOpenShell::IfcGeom
+    nlohmann_json::nlohmann_json tinygltf
+    miniz pugixml
+)
+
+if(UNIX AND NOT APPLE)
+    target_link_libraries(BimCoreTests PRIVATE X11 dl pthread tbb)
+endif()
+
+# Tell CMake and VS Code to automatically discover our Catch2 test cases!
+include(Catch)
+catch_discover_tests(BimCoreTests)

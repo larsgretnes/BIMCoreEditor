@@ -47,6 +47,9 @@ namespace BimCore {
 
         bool IsFlightMode() const;
 
+        // --- MOVED TO PUBLIC FOR TESTING: Analytical plane intersection logic ---
+        DraggedPlane CheckPlaneHits(const Ray& ray, const SelectionState& state, bool showClips, glm::vec3& outHitPoint);
+
     private:
         void HandleMousePicking(Window&                                     window,
                                 Camera&                                     camera,
@@ -62,9 +65,6 @@ namespace BimCore {
                               const glm::mat4& view,
                               const glm::mat4& proj,
                               const glm::vec3& camPos);
-
-        // --- NEW: Analytical plane intersection logic ---
-        DraggedPlane CheckPlaneHits(const Ray& ray, const SelectionState& state, bool showClips, glm::vec3& outHitPoint);
 
     private:
         // --- Internal State ---
