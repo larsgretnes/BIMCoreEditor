@@ -133,6 +133,12 @@ namespace BimCore {
                     if (selection.hiddenObjects.count(obj.guid) == 0) allHidden = false;
                 }
                 history.ExecuteCommand(std::make_unique<CmdHide>(selection, targetGuids, !allHidden));
+                
+                // --- THE FIX ---
+                if (!allHidden) {
+                    selection.objects.clear();
+                    selection.selectionChanged = true;
+                }
             }
             m_hWasDown = hNow;
 
@@ -141,6 +147,10 @@ namespace BimCore {
                 std::vector<std::string> toDelete;
                 for (auto& obj : selection.objects) toDelete.push_back(obj.guid);
                 history.ExecuteCommand(std::make_unique<CmdDelete>(selection, toDelete));
+                
+                // --- THE FIX ---
+                selection.objects.clear();
+                selection.selectionChanged = true;
             }
             m_delWasDown = delNow;
 
@@ -485,10 +495,7 @@ namespace BimCore {
 
                 selection.selectionChanged = true;
             } else {
-                if (!isCtrlPressed) {
-                    selection.objects.clear();
-                    selection.selectionChanged = true;
-                }
+                // Background click leaves selection intact now!
             }
         }
         m_mouseWasDown = mouseDown;

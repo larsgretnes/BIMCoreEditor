@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
-#include <cstdio> // For snprintf
+#include <cstdio>
 #include "platform/portable-file-dialogs.h"
 
 #define ICON_FA_SEARCH        "\xef\x80\x82"
@@ -103,6 +103,12 @@ namespace BimCore {
                 std::vector<std::string> targetGuids;
                 for (const auto& obj : state.objects) targetGuids.push_back(obj.guid);
                 history.ExecuteCommand(std::make_unique<CmdHide>(state, targetGuids, anyVisible));
+                
+                // --- THE FIX ---
+                if (anyVisible) {
+                    state.objects.clear();
+                    state.selectionChanged = true;
+                }
             }
             ImGui::SameLine();
 
@@ -116,6 +122,10 @@ namespace BimCore {
             std::vector<std::string> toDelete;
             for (const auto& obj : state.objects) toDelete.push_back(obj.guid);
             history.ExecuteCommand(std::make_unique<CmdDelete>(state, toDelete));
+            
+            // --- THE FIX ---
+            state.objects.clear();
+            state.selectionChanged = true;
         } else {
             std::string objToDeleteEntirely = "";
             std::string objToDeselect = "";
@@ -169,7 +179,7 @@ namespace BimCore {
                     bool isHidden = state.hiddenObjects.count(obj.guid) > 0;
                     if (ImGui::Button(isHidden ? "Show" : "Hide")) {
                         history.ExecuteCommand(std::make_unique<CmdHide>(state, std::vector<std::string>{obj.guid}, !isHidden));
-                        if (!isHidden) objToDeselect = obj.guid;
+                        if (!isHidden) objToDeselect = obj.guid; // Drops selection if hidden
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("Delete Entity")) objToDeleteEntirely = obj.guid;
@@ -202,6 +212,11 @@ namespace BimCore {
 
             if (!objToDeleteEntirely.empty()) {
                 history.ExecuteCommand(std::make_unique<CmdDelete>(state, std::vector<std::string>{objToDeleteEntirely}));
+                
+                // --- THE FIX ---
+                state.objects.erase(std::remove_if(state.objects.begin(), state.objects.end(),
+                                                   [&](const SelectedObject& o) { return o.guid == objToDeleteEntirely; }), state.objects.end());
+                state.selectionChanged = true;
             }
         }
         ImGui::End();

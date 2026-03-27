@@ -10,6 +10,7 @@
 #define ICON_FA_MOUSE_POINTER "\xef\x89\x85"
 #define ICON_FA_EYE           "\xef\x81\xae"
 #define ICON_FA_TRASH         "\xef\x80\x8d"
+#define ICON_FA_TIMES         "\xef\x80\x8d" // Close/Clear icon
 
 namespace BimCore {
 
@@ -34,7 +35,7 @@ namespace BimCore {
 
     void UIStatusOverlay::RenderStatusPanel(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents) {
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        const float statsPanelHeight = 75.0f; // --- FIXED: Halved the height ---
+        const float statsPanelHeight = 75.0f; 
         const float mainPanelHeight = viewport->WorkSize.y - statsPanelHeight;
 
         ImGuiContext* g = ImGui::GetCurrentContext();
@@ -52,7 +53,6 @@ namespace BimCore {
             ImGui::Separator();
         }
 
-        // --- FIXED: Display FPS as a whole number ---
         ImGui::Text("FPS: %.0f", ImGui::GetIO().Framerate);
 
         if (!documents.empty()) {
@@ -72,7 +72,7 @@ namespace BimCore {
         ImGui::End();
     }
 
-    void UIStatusOverlay::RenderContextMenu(SelectionState& state, bool& triggerFocus) {
+    void UIStatusOverlay::RenderContextMenu(SelectionState& state, bool& triggerFocus, CommandHistory& history) {
         bool isHoveringUI = ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow) || ImGui::IsAnyItemHovered();
 
         if (ImGui::IsMouseReleased(ImGuiMouseButton_Right) &&
@@ -95,21 +95,34 @@ namespace BimCore {
                 }
 
                 if (ImGui::MenuItem(anyVisible ? ICON_FA_EYE "  Hide Selection" : ICON_FA_EYE "  Show Selection")) {
-                    for (const auto& obj : state.objects) {
-                        if (anyVisible) state.hiddenObjects.insert(obj.guid);
-                        else state.hiddenObjects.erase(obj.guid);
+                    std::vector<std::string> targetGuids;
+                    for (const auto& obj : state.objects) targetGuids.push_back(obj.guid);
+                    history.ExecuteCommand(std::make_unique<CmdHide>(state, targetGuids, anyVisible));
+                    
+                    // --- THE FIX ---
+                    if (anyVisible) {
+                        state.objects.clear();
+                        state.selectionChanged = true;
                     }
-                    state.hiddenStateChanged = true;
                 }
 
                 if (ImGui::MenuItem(ICON_FA_TRASH "  Delete Selection")) {
-                    for (const auto& obj : state.objects) {
-                        state.deletedObjects.insert(obj.guid);
-                        state.hiddenObjects.insert(obj.guid);
-                    }
+                    std::vector<std::string> targetGuids;
+                    for (const auto& obj : state.objects) targetGuids.push_back(obj.guid);
+                    history.ExecuteCommand(std::make_unique<CmdDelete>(state, targetGuids));
+                    
+                    // --- THE FIX ---
                     state.objects.clear();
-                    state.hiddenStateChanged = true;
+                    state.selectionChanged = true;
                 }
+
+                ImGui::Separator();
+
+                if (ImGui::MenuItem(ICON_FA_TIMES "  Clear Selection")) {
+                    state.objects.clear();
+                    state.selectionChanged = true;
+                }
+
             } else {
                 ImGui::TextDisabled("Select elements to view actions.");
             }

@@ -9,6 +9,8 @@
 #include <imgui.h>
 #include <ImGuizmo.h>
 
+#define ICON_FA_TIMES "\xef\x80\x8d" // Close/Clear icon
+
 namespace BimCore {
 
     void UIMainPanel::DrawResetModal(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents, bool& triggerRebuild, CommandHistory& history) {
@@ -18,13 +20,11 @@ namespace BimCore {
 
             if (ImGui::Button("OK", ImVec2(120, 0))) {
 
-                // 1. Undo all command history
                 while(history.CanUndo()) history.Undo();
 
                 float minB[3] = {1e9f, 1e9f, 1e9f};
                 float maxB[3] = {-1e9f, -1e9f, -1e9f};
 
-                // 2. Restore properties, visibility, and FORCE geometry pull-back
                 for (auto& doc : documents) {
                     doc->SetHidden(false); 
                     for (auto& [guid, props] : state.originalProperties) {
@@ -33,24 +33,20 @@ namespace BimCore {
                     
                     auto& geom = doc->GetGeometry();
                     
-                    // Directly overwrite the exploded vertices with the originals
                     if (!geom.originalVertices.empty()) {
                         geom.vertices = geom.originalVertices;
                     }
                     
-                    // Calculate the TRUE bounds of the model directly from the data
                     for(int i=0; i<3; ++i) {
                         if (geom.minBounds[i] < minB[i]) minB[i] = geom.minBounds[i];
                         if (geom.maxBounds[i] > maxB[i]) maxB[i] = geom.maxBounds[i];
                     }
                 }
                 
-                // 3. Reset Explode and Rebuild triggers
                 triggerRebuild = true;
                 state.explodeFactor = 0.0f;
                 state.updateGeometry = true; 
                 
-                // 4. Snap Clipping Planes to the calculated true bounds
                 if (!documents.empty()) {
                     state.clipXMin = minB[0]; state.clipXMax = maxB[0];
                     state.clipYMin = minB[1]; state.clipYMax = maxB[1];
@@ -61,11 +57,9 @@ namespace BimCore {
                 state.showPlaneYMin = false; state.showPlaneYMax = false;
                 state.showPlaneZMin = false; state.showPlaneZMax = false;
 
-                // 5. Clear Search Buffers
                 memset(state.globalSearchBuf, 0, sizeof(state.globalSearchBuf));
                 memset(state.localSearchBuf, 0, sizeof(state.localSearchBuf));
 
-                // 6. Clear Selection, Hides, Deletes, and Property tracking
                 state.originalProperties.clear(); 
                 state.deletedProperties.clear();
                 
@@ -73,12 +67,10 @@ namespace BimCore {
                 state.deletedObjects.clear(); 
                 state.objects.clear();
                 
-                // 7. Reset Measurements
                 state.measureToolActive = false; 
                 state.completedMeasurements.clear(); 
                 state.isMeasuringActive = false;
 
-                // 8. Trigger UI & Camera updates
                 state.hiddenStateChanged = true; 
                 state.triggerResetCamera = true; 
                 state.selectionChanged = true;
@@ -109,6 +101,23 @@ namespace BimCore {
         // 1. Render Toolbar
         UIToolbar::Render(state, documents, configMaxExplode, history, triggerRebuild);
         
+        // THE NEW GLOBAL CLEAR SELECTION BUTTON
+        if (!state.objects.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.8f, 0.4f, 0.4f, 1.0f));
+            
+            if (ImGui::Button(ICON_FA_TIMES " Clear Active Selection", ImVec2(-FLT_MIN, 0))) {
+                state.objects.clear();
+                state.selectionChanged = true;
+            }
+            
+            ImGui::PopStyleColor(3);
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+        }
+
         // 2. Render Modal 
         DrawResetModal(state, documents, triggerRebuild, history);
 

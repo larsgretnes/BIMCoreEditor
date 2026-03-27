@@ -21,7 +21,9 @@ namespace BimCore {
         ImGui::PopStyleColor(3);
 
         if (isOpen) {
-            // --- 1. Text Search ---
+            // =================================================================
+            // 1. Text Search
+            // =================================================================
             ImGui::TextDisabled("Text Search");
             
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 60.0f);
@@ -139,7 +141,9 @@ namespace BimCore {
 
             ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
-            // --- 2. Spatial Search ---
+            // =================================================================
+            // 2. Object-Based Spatial Search
+            // =================================================================
             ImGui::TextDisabled("Spatial Search");
             
             if (state.objects.empty()) {
@@ -152,7 +156,7 @@ namespace BimCore {
                 ImGui::RadioButton("Touching Box", &spatialMode, 1);
                 ImGui::Checkbox("Invert Selection Result", &invertSpatial);
 
-                if (ImGui::Button("Execute Spatial Search", ImVec2(-FLT_MIN, 0))) {
+                if (ImGui::Button("Search by Target Volume", ImVec2(-FLT_MIN, 0))) {
                     
                     float tMin[3] = { 1e9f, 1e9f, 1e9f };
                     float tMax[3] = {-1e9f,-1e9f,-1e9f };
@@ -236,6 +240,92 @@ namespace BimCore {
                     }
                 }
             }
+
+            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+
+            // =================================================================
+            // 3. Clipping Plane Search (Section Box)
+            // =================================================================
+            ImGui::TextDisabled("Section Box Search");
+            
+            bool anyClipActive = state.showPlaneXMin || state.showPlaneXMax ||
+                                 state.showPlaneYMin || state.showPlaneYMax ||
+                                 state.showPlaneZMin || state.showPlaneZMax;
+
+            if (!anyClipActive) {
+                ImGui::TextWrapped("Activate at least one clipping plane to use this feature.");
+            } else {
+                static bool fullyInsidePlanes = false;
+                ImGui::Checkbox("Must be completely inside slice", &fullyInsidePlanes);
+
+                if (ImGui::Button("Search by Sliced Volume", ImVec2(-FLT_MIN, 0))) {
+                    std::vector<SelectedObject> newSelection;
+
+                    for (auto& doc : documents) {
+                        if (doc->IsHidden()) continue;
+                        const auto& geom = doc->GetGeometry();
+
+                        for (const auto& sub : geom.subMeshes) {
+                            if (state.hiddenObjects.count(sub.guid)) continue;
+                            if (!state.showOpeningsAndSpaces && (sub.type == "IfcOpeningElement" || sub.type == "IfcSpace")) continue;
+
+                            float sMin[3] = { 1e9f, 1e9f, 1e9f };
+                            float sMax[3] = {-1e9f,-1e9f,-1e9f };
+
+                            // Fetch AABB from BVH to make this lightning fast
+                            if (!geom.bvhNodes.empty() && sub.bvhRootIndex < geom.bvhNodes.size()) {
+                                const auto& node = geom.bvhNodes[sub.bvhRootIndex];
+                                for(int j=0; j<3; ++j) { sMin[j] = node.aabbMin[j]; sMax[j] = node.aabbMax[j]; }
+                            } else {
+                                for(uint32_t i = 0; i < sub.indexCount; ++i) {
+                                    const float* p = geom.vertices[geom.indices[sub.startIndex + i]].position;
+                                    for(int j=0; j<3; ++j) {
+                                        if(p[j] < sMin[j]) sMin[j] = p[j];
+                                        if(p[j] > sMax[j]) sMax[j] = p[j];
+                                    }
+                                }
+                            }
+
+                            bool match = true;
+                            
+                            if (fullyInsidePlanes) {
+                                // If "Completely Inside" is checked, the element's outermost bounds must not breach the active planes
+                                if (state.showPlaneXMin && sMin[0] < state.clipXMin) match = false;
+                                if (state.showPlaneXMax && sMax[0] > state.clipXMax) match = false;
+                                if (state.showPlaneYMin && sMin[1] < state.clipYMin) match = false;
+                                if (state.showPlaneYMax && sMax[1] > state.clipYMax) match = false;
+                                if (state.showPlaneZMin && sMin[2] < state.clipZMin) match = false;
+                                if (state.showPlaneZMax && sMax[2] > state.clipZMax) match = false;
+                            } else {
+                                // Default: Select anything touching/intersecting the active volume
+                                // (If the element's maximum bound is less than the minimum clip plane, it is entirely outside the volume)
+                                if (state.showPlaneXMin && sMax[0] < state.clipXMin) match = false;
+                                if (state.showPlaneXMax && sMin[0] > state.clipXMax) match = false;
+                                if (state.showPlaneYMin && sMax[1] < state.clipYMin) match = false;
+                                if (state.showPlaneYMax && sMin[1] > state.clipYMax) match = false;
+                                if (state.showPlaneZMin && sMax[2] < state.clipZMin) match = false;
+                                if (state.showPlaneZMax && sMin[2] > state.clipZMax) match = false;
+                            }
+
+                            if (match) {
+                                SelectedObject so;
+                                so.guid = sub.guid;
+                                so.type = sub.type;
+                                so.startIndex = sub.globalStartIndex;
+                                so.indexCount = sub.indexCount;
+                                std::string bg = sub.guid.length() >= 22 ? sub.guid.substr(0, 22) : sub.guid;
+                                so.properties = doc->GetElementProperties(bg);
+                                newSelection.push_back(so);
+                            }
+                        }
+                    }
+
+                    state.objects = newSelection;
+                    state.selectionChanged = true;
+                    if (!state.objects.empty()) triggerFocus = true;
+                }
+            }
         }
     }
+
 } // namespace BimCore
