@@ -320,6 +320,7 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(BimCoreTests PRIVATE X11 dl pthread tbb)
 endif()
 
-# Tell CMake and VS Code to automatically discover our Catch2 test cases!
+# Tell CMake and VS Code to automatically discover our Catch2 test cases, 
+# and explicitly set the working directory so file paths resolve correctly!
 include(Catch)
-catch_discover_tests(BimCoreTests)
+catch_discover_tests(BimCoreTests WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

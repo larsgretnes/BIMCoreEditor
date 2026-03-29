@@ -185,13 +185,17 @@ namespace BimCore {
 
     bool SceneModel::UpdateElementProperty(const std::string& guid, const std::string& propName, const std::string& newValue) {
         LoadPropertiesFromAST(guid);
-        if (m_propertyCache[guid].find(propName) != m_propertyCache[guid].end()) {
-            m_propertyCache[guid][propName].value = newValue;
-            m_propertyCache[guid][propName].isModified = (newValue != m_propertyCache[guid][propName].originalValue);
-            m_propertyCache[guid][propName].isDeleted = false;
-            return true;
+        
+        // Automatically create the property entry if it doesn't exist yet!
+        if (m_propertyCache[guid].find(propName) == m_propertyCache[guid].end()) {
+            m_propertyCache[guid][propName] = { "", "", false, false };
         }
-        return false;
+
+        m_propertyCache[guid][propName].value = newValue;
+        m_propertyCache[guid][propName].isModified = (newValue != m_propertyCache[guid][propName].originalValue);
+        m_propertyCache[guid][propName].isDeleted = false;
+        
+        return true;
     }
 
     bool SceneModel::DeleteElementProperty(const std::string& guid, const std::string& propName) {
@@ -214,14 +218,170 @@ namespace BimCore {
         return false;
     }
 
-    bool SceneModel::DeleteElement(const std::string& guid) {
+bool SceneModel::DeleteElement(const std::string& guid) {
         if (!m_database) return false;
         try {
             std::string realGuid = guid.length() >= 22 ? guid.substr(0, 22) : guid;
             IfcUtil::IfcBaseClass* obj = m_database->instance_by_guid(realGuid);
-            if (obj) m_database->removeEntity(obj);
+            if (obj) {
+                // =====================================================================
+                // 1. Clean up Spatial Containment (The floor/building list)
+                // =====================================================================
+                auto spatialRels = m_database->instances_by_type("IfcRelContainedInSpatialStructure");
+                if (spatialRels) {
+                    for (auto rel : *spatialRels) {
+                        if (auto rel4 = rel->as<Ifc4::IfcRelContainedInSpatialStructure>()) {
+                            if (auto related = rel4->RelatedElements()) {
+                                std::vector<Ifc4::IfcProduct*> kept;
+                                bool found = false;
+                                for (auto item : *related) { if (item == obj) found = true; else kept.push_back(item); }
+                                if (found) {
+                                    if (kept.empty()) m_database->removeEntity(rel);
+                                    else {
+                                        boost::shared_ptr<Ifc4::IfcProduct::list> newList(new Ifc4::IfcProduct::list());
+                                        for (auto k : kept) newList->push(k);
+                                        rel4->setRelatedElements(newList);
+                                    }
+                                }
+                            }
+                        } else if (auto rel2 = rel->as<Ifc2x3::IfcRelContainedInSpatialStructure>()) {
+                            if (auto related = rel2->RelatedElements()) {
+                                std::vector<Ifc2x3::IfcProduct*> kept;
+                                bool found = false;
+                                for (auto item : *related) { if (item == obj) found = true; else kept.push_back(item); }
+                                if (found) {
+                                    if (kept.empty()) m_database->removeEntity(rel);
+                                    else {
+                                        boost::shared_ptr<Ifc2x3::IfcProduct::list> newList(new Ifc2x3::IfcProduct::list());
+                                        for (auto k : kept) newList->push(k);
+                                        rel2->setRelatedElements(newList);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // =====================================================================
+                // 2. Clean up Properties (The Psets list)
+                // =====================================================================
+                auto propRels = m_database->instances_by_type("IfcRelDefinesByProperties");
+                if (propRels) {
+                    for (auto rel : *propRels) {
+                        if (auto rel4 = rel->as<Ifc4::IfcRelDefinesByProperties>()) {
+                            if (auto related = rel4->RelatedObjects()) {
+                                std::vector<Ifc4::IfcObjectDefinition*> kept;
+                                bool found = false;
+                                for (auto item : *related) { if (item == obj) found = true; else kept.push_back(item); }
+                                if (found) {
+                                    if (kept.empty()) m_database->removeEntity(rel);
+                                    else {
+                                        boost::shared_ptr<Ifc4::IfcObjectDefinition::list> newList(new Ifc4::IfcObjectDefinition::list());
+                                        for (auto k : kept) newList->push(k);
+                                        rel4->setRelatedObjects(newList);
+                                    }
+                                }
+                            }
+                        } else if (auto rel2 = rel->as<Ifc2x3::IfcRelDefinesByProperties>()) {
+                            if (auto related = rel2->RelatedObjects()) {
+                                std::vector<Ifc2x3::IfcObject*> kept;
+                                bool found = false;
+                                for (auto item : *related) { if (item == obj) found = true; else kept.push_back(item); }
+                                if (found) {
+                                    if (kept.empty()) m_database->removeEntity(rel);
+                                    else {
+                                        boost::shared_ptr<Ifc2x3::IfcObject::list> newList(new Ifc2x3::IfcObject::list());
+                                        for (auto k : kept) newList->push(k);
+                                        rel2->setRelatedObjects(newList);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // =====================================================================
+                // 3. Clean up Aggregations (Assemblies / Project Hierarchy)
+                // =====================================================================
+                auto aggRels = m_database->instances_by_type("IfcRelAggregates");
+                if (aggRels) {
+                    for (auto rel : *aggRels) {
+                        if (auto rel4 = rel->as<Ifc4::IfcRelAggregates>()) {
+                            if (auto related = rel4->RelatedObjects()) {
+                                std::vector<Ifc4::IfcObjectDefinition*> kept;
+                                bool found = false;
+                                for (auto item : *related) { if (item == obj) found = true; else kept.push_back(item); }
+                                if (found) {
+                                    if (kept.empty()) m_database->removeEntity(rel);
+                                    else {
+                                        boost::shared_ptr<Ifc4::IfcObjectDefinition::list> newList(new Ifc4::IfcObjectDefinition::list());
+                                        for (auto k : kept) newList->push(k);
+                                        rel4->setRelatedObjects(newList);
+                                    }
+                                }
+                            }
+                        } else if (auto rel2 = rel->as<Ifc2x3::IfcRelAggregates>()) {
+                            if (auto related = rel2->RelatedObjects()) {
+                                std::vector<Ifc2x3::IfcObjectDefinition*> kept;
+                                bool found = false;
+                                for (auto item : *related) { if (item == obj) found = true; else kept.push_back(item); }
+                                if (found) {
+                                    if (kept.empty()) m_database->removeEntity(rel);
+                                    else {
+                                        boost::shared_ptr<Ifc2x3::IfcObjectDefinition::list> newList(new Ifc2x3::IfcObjectDefinition::list());
+                                        for (auto k : kept) newList->push(k);
+                                        rel2->setRelatedObjects(newList);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // =====================================================================
+                // 4. Clean up Type Definitions
+                // =====================================================================
+                auto typeRels = m_database->instances_by_type("IfcRelDefinesByType");
+                if (typeRels) {
+                    for (auto rel : *typeRels) {
+                        if (auto rel4 = rel->as<Ifc4::IfcRelDefinesByType>()) {
+                            if (auto related = rel4->RelatedObjects()) {
+                                std::vector<Ifc4::IfcObject*> kept;
+                                bool found = false;
+                                for (auto item : *related) { if (item == obj) found = true; else kept.push_back(item); }
+                                if (found) {
+                                    if (kept.empty()) m_database->removeEntity(rel);
+                                    else {
+                                        boost::shared_ptr<Ifc4::IfcObject::list> newList(new Ifc4::IfcObject::list());
+                                        for (auto k : kept) newList->push(k);
+                                        rel4->setRelatedObjects(newList);
+                                    }
+                                }
+                            }
+                        } else if (auto rel2 = rel->as<Ifc2x3::IfcRelDefinesByType>()) {
+                            if (auto related = rel2->RelatedObjects()) {
+                                std::vector<Ifc2x3::IfcObject*> kept;
+                                bool found = false;
+                                for (auto item : *related) { if (item == obj) found = true; else kept.push_back(item); }
+                                if (found) {
+                                    if (kept.empty()) m_database->removeEntity(rel);
+                                    else {
+                                        boost::shared_ptr<Ifc2x3::IfcObject::list> newList(new Ifc2x3::IfcObject::list());
+                                        for (auto k : kept) newList->push(k);
+                                        rel2->setRelatedObjects(newList);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Finally, safely remove the object itself
+                m_database->removeEntity(obj);
+            }
         } catch (...) {}
 
+        // Remove from visual geometry
         m_geometry.subMeshes.erase(
             std::remove_if(m_geometry.subMeshes.begin(), m_geometry.subMeshes.end(),
                            [&](const RenderSubMesh& sub) { return sub.guid == guid; }),
@@ -250,24 +410,39 @@ namespace BimCore {
         return false;
     }
 
-    bool SceneModel::CommitASTChanges() {
+bool SceneModel::CommitASTChanges() {
         if (!m_database) return false;
         std::vector<IfcUtil::IfcBaseClass*> entitiesToDelete;
+        
         for (auto& [guid, props] : m_propertyCache) {
             bool needsASTUpdate = false;
-            for (auto& [key, info] : props) { if (info.isModified || info.isDeleted) { needsASTUpdate = true; break; } }
+            for (auto& [key, info] : props) { 
+                if (info.isModified || info.isDeleted) { needsASTUpdate = true; break; } 
+            }
             if (!needsASTUpdate) continue;
+            
             std::string realGuid = guid.length() >= 22 ? guid.substr(0, 22) : guid;
             IfcUtil::IfcBaseClass* targetObj = nullptr;
             try { targetObj = m_database->instance_by_guid(realGuid); } catch(...) { continue; }
             if (!targetObj) continue;
+            
+            // =====================================================================
+            // FIX: Safely Add or Update the Core Name Attribute
+            // =====================================================================
             if (props.count("Name")) {
                 auto& info = props["Name"];
                 if (info.isModified) {
-                    if (auto root4 = targetObj->as<Ifc4::IfcRoot>()) root4->setName(info.value);
-                    else if (auto root2 = targetObj->as<Ifc2x3::IfcRoot>()) root2->setName(info.value);
+                    if (auto root4 = targetObj->as<Ifc4::IfcRoot>()) {
+                        // Pass as a boost::optional string!
+                        root4->setName(boost::optional<std::string>(info.value)); 
+                    }
+                    else if (auto root2 = targetObj->as<Ifc2x3::IfcRoot>()) {
+                        root2->setName(boost::optional<std::string>(info.value));
+                    }
                 }
             }
+
+            // (The rest of your PSet saving logic remains exactly the same...)
             auto rels = m_database->instances_by_type("IfcRelDefinesByProperties");
             if (!rels) continue;
             for (auto it = rels->begin(); it != rels->end(); ++it) {

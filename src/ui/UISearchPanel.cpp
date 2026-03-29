@@ -13,6 +13,57 @@
 
 namespace BimCore {
 
+    // --- NEW: Decoupled Search Engine ---
+    void UISearchPanel::ExecuteTextSearch(const std::string& query, std::vector<std::shared_ptr<SceneModel>>& documents, SelectionState& state) {
+        state.objects.clear();
+        std::string lowerQuery = query;
+        std::transform(lowerQuery.begin(), lowerQuery.end(), lowerQuery.begin(), ::tolower);
+
+        if (!lowerQuery.empty()) {
+            for (auto& doc : documents) {
+                if (doc->IsHidden()) continue;
+                const auto& geom = doc->GetGeometry();
+                for (const auto& sub : geom.subMeshes) {
+                    if (state.hiddenObjects.count(sub.guid)) continue;
+
+                    std::string bg = sub.guid.length() >= 22 ? sub.guid.substr(0, 22) : sub.guid;
+                    std::string bgLower = bg;
+                    std::transform(bgLower.begin(), bgLower.end(), bgLower.begin(), ::tolower);
+                    
+                    std::string typeLower = sub.type;
+                    std::transform(typeLower.begin(), typeLower.end(), typeLower.begin(), ::tolower);
+                    
+                    auto props = doc->GetElementProperties(bg);
+                    bool match = false;
+
+                    if (bgLower.find(lowerQuery) != std::string::npos || typeLower.find(lowerQuery) != std::string::npos) {
+                        match = true;
+                    } else {
+                        for (const auto& [k, prop] : props) {
+                            std::string valLower = prop.value; 
+                            std::transform(valLower.begin(), valLower.end(), valLower.begin(), ::tolower);
+                            if (valLower.find(lowerQuery) != std::string::npos) {
+                                match = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (match) {
+                        SelectedObject so;
+                        so.guid = sub.guid;
+                        so.type = sub.type;
+                        so.startIndex = sub.globalStartIndex;
+                        so.indexCount = sub.indexCount;
+                        so.properties = props;
+                        state.objects.push_back(so);
+                    }
+                }
+            }
+        }
+        state.selectionChanged = true;
+    }
+
     void UISearchPanel::Render(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents, bool& triggerFocus) {
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.25f, 0.30f, 0.35f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.30f, 0.35f, 0.40f, 1.0f));
@@ -32,53 +83,8 @@ namespace BimCore {
             if (ImGui::Button("Find", ImVec2(55, 0))) doTextSearch = true;
 
             if (doTextSearch) {
-                state.objects.clear();
-                std::string query = state.globalSearchBuf;
-                std::transform(query.begin(), query.end(), query.begin(), ::tolower);
-
-                if (!query.empty()) {
-                    for (auto& doc : documents) {
-                        if (doc->IsHidden()) continue;
-                        const auto& geom = doc->GetGeometry();
-                        for (const auto& sub : geom.subMeshes) {
-                            if (state.hiddenObjects.count(sub.guid)) continue;
-
-                            std::string bg = sub.guid.length() >= 22 ? sub.guid.substr(0, 22) : sub.guid;
-                            std::string bgLower = bg;
-                            std::transform(bgLower.begin(), bgLower.end(), bgLower.begin(), ::tolower);
-                            
-                            std::string typeLower = sub.type;
-                            std::transform(typeLower.begin(), typeLower.end(), typeLower.begin(), ::tolower);
-                            
-                            auto props = doc->GetElementProperties(bg);
-                            bool match = false;
-
-                            if (bgLower.find(query) != std::string::npos || typeLower.find(query) != std::string::npos) {
-                                match = true;
-                            } else {
-                                for (const auto& [k, prop] : props) {
-                                    std::string valLower = prop.value; 
-                                    std::transform(valLower.begin(), valLower.end(), valLower.begin(), ::tolower);
-                                    if (valLower.find(query) != std::string::npos) {
-                                        match = true;
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if (match) {
-                                SelectedObject so;
-                                so.guid = sub.guid;
-                                so.type = sub.type;
-                                so.startIndex = sub.globalStartIndex;
-                                so.indexCount = sub.indexCount;
-                                so.properties = props;
-                                state.objects.push_back(so);
-                            }
-                        }
-                    }
-                }
-                state.selectionChanged = true;
+                // Call our newly decoupled function!
+                ExecuteTextSearch(state.globalSearchBuf, documents, state);
                 if (!state.objects.empty()) triggerFocus = true;
             }
 
