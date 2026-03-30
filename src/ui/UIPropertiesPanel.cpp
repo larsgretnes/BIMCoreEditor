@@ -17,6 +17,7 @@
 #define ICON_FA_EDIT          "\xef\x8c\x83"
 #define ICON_FA_TRASH         "\xef\x80\x8d"
 #define ICON_FA_UNDO          "\xef\x80\x9e"
+#define ICON_FA_PLUS          "\xef\x80\xab" // Standard FontAwesome Plus icon
 
 namespace BimCore {
 
@@ -72,6 +73,63 @@ namespace BimCore {
         }
         std::string locFilter = state.localSearchBuf;
         ImGui::Separator();
+
+        // =====================================================================
+        // CUSTOM PROPERTY INJECTION UI
+        // =====================================================================
+        ImGui::Spacing();
+        if (ImGui::Button(ICON_FA_PLUS " Add Custom Property", ImVec2(-1, 0))) {
+            ImGui::OpenPopup("AddPropertyModal");
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
+
+        if (ImGui::BeginPopupModal("AddPropertyModal", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            static char psetNameBuf[128] = "BIMCore_CustomData";
+            static char propNameBuf[128]  = "";
+            static char propValueBuf[256] = "";
+
+            ImGui::Text("Inject new data into %zu selected element(s):", state.objects.size());
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            ImGui::InputText("Property Set", psetNameBuf, IM_ARRAYSIZE(psetNameBuf));
+            ImGui::InputText("Property Name", propNameBuf, IM_ARRAYSIZE(propNameBuf));
+            ImGui::InputText("Value", propValueBuf, IM_ARRAYSIZE(propValueBuf));
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            if (ImGui::Button("Inject Property", ImVec2(140, 0))) {
+                if (strlen(propNameBuf) > 0) {
+                    // Apply to all selected objects
+                    for (auto& obj : state.objects) {
+                        auto doc = FindOwnerDocument(obj.guid, documents);
+                        if (doc) {
+                            if (doc->AddCustomProperty(obj.guid, psetNameBuf, propNameBuf, propValueBuf)) {
+                                // Refresh this object's property cache immediately so the UI updates
+                                obj.properties = doc->GetElementProperties(obj.guid);
+                            }
+                        }
+                    }
+                    
+                    propNameBuf[0] = '\0';
+                    propValueBuf[0] = '\0';
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            
+            ImGui::SetItemDefaultFocus();
+            ImGui::SameLine();
+            
+            if (ImGui::Button("Cancel", ImVec2(140, 0))) {
+                ImGui::CloseCurrentPopup();
+            }
+            
+            ImGui::EndPopup();
+        }
+        // =====================================================================
 
         bool deleteAll = false;
         ImVec2 sqBtn(ImGui::GetFrameHeight(), ImGui::GetFrameHeight());

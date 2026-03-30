@@ -11,7 +11,7 @@
 #include <glm/glm.hpp>
 #include <ifcparse/IfcFile.h>
 
-#include "graphics/GraphicsContext.h" // <--- This provides Vertex and TextureData now!
+#include "graphics/GraphicsContext.h" // Provides Vertex and TextureData
 
 namespace BimCore {
 
@@ -61,8 +61,8 @@ namespace BimCore {
     class SceneModel {
     public:
         SceneModel(std::shared_ptr<IfcParse::IfcFile> database,
-                    RenderMesh                        geometry,
-                    const std::string&                path);
+                   RenderMesh                         geometry,
+                   const std::string&                 path);
 
         SceneModel(const SceneModel&)            = delete;
         SceneModel& operator=(const SceneModel&) = delete;
@@ -80,9 +80,13 @@ namespace BimCore {
         }
 
         std::map<std::string, PropertyInfo> GetElementProperties(const std::string& guid);
+        
         bool UpdateElementProperty(const std::string& guid, const std::string& key, const std::string& value);
         bool DeleteElementProperty(const std::string& guid, const std::string& key);
         bool UndoElementProperty(const std::string& guid, const std::string& key);
+        
+        // --- NEW: Add a completely new Custom Property to the IFC AST ---
+        bool AddCustomProperty(const std::string& guid, const std::string& psetName, const std::string& propName, const std::string& value);
 
         bool DeleteElement(const std::string& guid);
         bool UpdateElementColor(const std::string& guid, float r, float g, float b);
@@ -130,7 +134,7 @@ namespace BimCore {
         std::string                                                     m_filePath;
         std::map<std::string, std::map<std::string, PropertyInfo>>      m_propertyCache;
         std::unordered_map<std::string, std::string>                    m_childToParent;
-        std::unordered_map<std::string, std::vector<std::string>> m_parentToChildren;
+        std::unordered_map<std::string, std::vector<std::string>>       m_parentToChildren;
 
         std::map<std::string, std::vector<uint32_t>>              m_uiGroups;
         bool m_isHidden = false;
