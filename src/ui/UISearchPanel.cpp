@@ -13,145 +13,217 @@
 
 namespace BimCore {
 
-    // --- NEW: Decoupled Search Engine ---
+    // --- Helper function for Tooltip ---
+    static void HelpMarker(const char* desc) {
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+            ImGui::TextUnformatted(desc);
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
+    }
+
+    void UISearchPanel::ParseSearchQuery(const std::string& query, std::string& outKey, std::string& outValue) {
+        outKey.clear();
+        outValue.clear();
+
+        if (query.empty()) return;
+
+        bool inQuotes = false;
+        int splitIndex = -1;
+
+        for (int i = 0; i < query.length(); ++i) {
+            if (query[i] == '"') {
+                inQuotes = !inQuotes;
+            } else if (query[i] == ':' && !inQuotes) {
+                splitIndex = i;
+                break;
+            }
+        }
+
+        if (splitIndex != -1) {
+            outKey = query.substr(0, splitIndex);
+            outValue = query.substr(splitIndex + 1);
+        } else {
+            outValue = query; 
+        }
+
+        auto trimAndClean = [](std::string s) {
+            s.erase(0, s.find_first_not_of(" \t"));
+            s.erase(s.find_last_not_of(" \t") + 1);
+            if (s.length() >= 2 && s.front() == '"' && s.back() == '"') s = s.substr(1, s.length() - 2);
+            s.erase(std::remove(s.begin(), s.end(), '*'), s.end());
+            std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+            return s;
+        };
+
+        outKey = trimAndClean(outKey);
+        outValue = trimAndClean(outValue);
+    }
+
     void UISearchPanel::ExecuteTextSearch(const std::string& query, std::vector<std::shared_ptr<SceneModel>>& documents, SelectionState& state) {
         state.objects.clear();
-        std::string lowerQuery = query;
-        std::transform(lowerQuery.begin(), lowerQuery.end(), lowerQuery.begin(), ::tolower);
+        
+        std::string searchKey, searchValue;
+        ParseSearchQuery(query, searchKey, searchValue);
 
-        if (!lowerQuery.empty()) {
-            for (auto& doc : documents) {
-                if (doc->IsHidden()) continue;
-                const auto& geom = doc->GetGeometry();
-                for (const auto& sub : geom.subMeshes) {
-                    if (state.hiddenObjects.count(sub.guid)) continue;
+        if (searchValue.empty() && searchKey.empty()) return;
 
-                    std::string bg = sub.guid.length() >= 22 ? sub.guid.substr(0, 22) : sub.guid;
-                    std::string bgLower = bg;
-                    std::transform(bgLower.begin(), bgLower.end(), bgLower.begin(), ::tolower);
-                    
-                    std::string typeLower = sub.type;
-                    std::transform(typeLower.begin(), typeLower.end(), typeLower.begin(), ::tolower);
-                    
-                    auto props = doc->GetElementProperties(bg);
-                    bool match = false;
+        for (auto& doc : documents) {
+            if (doc->IsHidden()) continue;
+            const auto& geom = doc->GetGeometry();
+            for (const auto& sub : geom.subMeshes) {
+                if (state.hiddenObjects.count(sub.guid)) continue;
 
-                    if (bgLower.find(lowerQuery) != std::string::npos || typeLower.find(lowerQuery) != std::string::npos) {
+                std::string bg = sub.guid.length() >= 22 ? sub.guid.substr(0, 22) : sub.guid;
+                std::string bgLower = bg;
+                std::transform(bgLower.begin(), bgLower.end(), bgLower.begin(), ::tolower);
+                
+                std::string typeLower = sub.type;
+                std::transform(typeLower.begin(), typeLower.end(), typeLower.begin(), ::tolower);
+                
+                auto props = doc->GetElementProperties(bg);
+                bool match = false;
+
+                if (searchKey.empty()) {
+                    if (bgLower.find(searchValue) != std::string::npos || typeLower.find(searchValue) != std::string::npos) {
                         match = true;
                     } else {
                         for (const auto& [k, prop] : props) {
                             std::string valLower = prop.value; 
                             std::transform(valLower.begin(), valLower.end(), valLower.begin(), ::tolower);
-                            if (valLower.find(lowerQuery) != std::string::npos) {
+                            if (valLower.find(searchValue) != std::string::npos) {
                                 match = true;
                                 break;
                             }
                         }
                     }
-
-                    if (match) {
-                        SelectedObject so;
-                        so.guid = sub.guid;
-                        so.type = sub.type;
-                        so.startIndex = sub.globalStartIndex;
-                        so.indexCount = sub.indexCount;
-                        so.properties = props;
-                        state.objects.push_back(so);
+                } else {
+                    if (std::string("guid").find(searchKey) != std::string::npos && bgLower.find(searchValue) != std::string::npos) match = true;
+                    if (!match && std::string("type").find(searchKey) != std::string::npos && typeLower.find(searchValue) != std::string::npos) match = true;
+                    
+                    if (!match) {
+                        for (const auto& [k, prop] : props) {
+                            std::string kLower = k; 
+                            std::transform(kLower.begin(), kLower.end(), kLower.begin(), ::tolower);
+                            
+                            if (kLower.find(searchKey) != std::string::npos) {
+                                std::string valLower = prop.value;
+                                std::transform(valLower.begin(), valLower.end(), valLower.begin(), ::tolower);
+                                
+                                if (valLower.find(searchValue) != std::string::npos) {
+                                    match = true;
+                                    break;
+                                }
+                            }
+                        }
                     }
+                }
+
+                if (match) {
+                    SelectedObject so;
+                    so.guid = sub.guid;
+                    so.type = sub.type;
+                    so.startIndex = sub.globalStartIndex;
+                    so.indexCount = sub.indexCount;
+                    so.properties = props;
+                    state.objects.push_back(so);
                 }
             }
         }
+        
         state.selectionChanged = true;
     }
 
     void UISearchPanel::Render(SelectionState& state, std::vector<std::shared_ptr<SceneModel>>& documents, bool& triggerFocus) {
-        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.25f, 0.30f, 0.35f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.30f, 0.35f, 0.40f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.35f, 0.40f, 0.45f, 1.0f));
-        bool isOpen = ImGui::CollapsingHeader("Search & Select", ImGuiTreeNodeFlags_DefaultOpen);
-        ImGui::PopStyleColor(3);
+        
+        ImGui::Begin("Advanced Search", &state.showSearchPanel);
 
-        if (isOpen) {
-            // =================================================================
-            // 1. Text Search
-            // =================================================================
-            ImGui::TextDisabled("Text Search");
-            
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 60.0f);
-            bool doTextSearch = ImGui::InputTextWithHint("##globalsearch", "Search Name, Type, GUID...", state.globalSearchBuf, sizeof(state.globalSearchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-            ImGui::SameLine();
-            if (ImGui::Button("Find", ImVec2(55, 0))) doTextSearch = true;
+        // =================================================================
+        // 1. Text Search (Default Open)
+        // =================================================================
+        ImGui::TextDisabled("Text Search"); 
+        ImGui::SameLine();
+        HelpMarker("Search Tips:\n"
+                   "- 'chair' finds anything containing the word.\n"
+                   "- 'Name:Chair' searches specifically in the Name property.\n"
+                   "- '\"Pset_Room:Name\":Office' supports special characters.\n"
+                   "- Wildcards like '*' are ignored; implicit 'contains' is used.");
 
-            if (doTextSearch) {
-                // Call our newly decoupled function!
-                ExecuteTextSearch(state.globalSearchBuf, documents, state);
-                if (!state.objects.empty()) triggerFocus = true;
-            }
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 60.0f);
+        bool doTextSearch = ImGui::InputTextWithHint("##globalsearch", "Search Key:Value or Global...", state.globalSearchBuf, sizeof(state.globalSearchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine();
+        if (ImGui::Button("Find", ImVec2(55, 0))) doTextSearch = true;
 
-            // --- Dynamic CSV Export ---
-            if (!state.objects.empty()) {
-                ImGui::Spacing();
-                if (ImGui::Button("Export Results to CSV", ImVec2(-FLT_MIN, 0))) {
-                    auto saveDialog = pfd::save_file("Export Search Results", "SearchResults.csv", { "CSV Files", "*.csv" });
-                    std::string path = saveDialog.result();
-                    
-                    if (!path.empty()) {
-                        std::ofstream out(path);
+        if (doTextSearch) {
+            ExecuteTextSearch(state.globalSearchBuf, documents, state);
+            if (!state.objects.empty()) triggerFocus = true;
+        }
 
-                        auto escapeCSV = [](const std::string& val) {
-                            std::string res = val;
-                            size_t pos = 0;
-                            while ((pos = res.find('"', pos)) != std::string::npos) {
-                                res.replace(pos, 1, "\"\"");
-                                pos += 2;
-                            }
-                            return "\"" + res + "\"";
-                        };
+        if (!state.objects.empty()) {
+            ImGui::Spacing();
+            if (ImGui::Button("Export Results to CSV", ImVec2(-FLT_MIN, 0))) {
+                auto saveDialog = pfd::save_file("Export Search Results", "SearchResults.csv", { "CSV Files", "*.csv" });
+                std::string path = saveDialog.result();
+                
+                if (!path.empty()) {
+                    std::ofstream out(path);
 
-                        std::vector<std::string> customProps;
-                        std::set<std::string> seenProps;
-                        for (const auto& obj : state.objects) {
-                            for (const auto& [key, prop] : obj.properties) {
-                                if (key != "Name" && seenProps.find(key) == seenProps.end()) {
-                                    seenProps.insert(key);
-                                    customProps.push_back(key);
-                                }
+                    auto escapeCSV = [](const std::string& val) {
+                        std::string res = val;
+                        size_t pos = 0;
+                        while ((pos = res.find('"', pos)) != std::string::npos) {
+                            res.replace(pos, 1, "\"\"");
+                            pos += 2;
+                        }
+                        return "\"" + res + "\"";
+                    };
+
+                    std::vector<std::string> customProps;
+                    std::set<std::string> seenProps;
+                    for (const auto& obj : state.objects) {
+                        for (const auto& [key, prop] : obj.properties) {
+                            if (key != "Name" && seenProps.find(key) == seenProps.end()) {
+                                seenProps.insert(key);
+                                customProps.push_back(key);
                             }
                         }
-                        
-                        std::sort(customProps.begin(), customProps.end());
+                    }
+                    
+                    std::sort(customProps.begin(), customProps.end());
 
-                        out << "GUID,Type,Name";
+                    out << "GUID,Type,Name";
+                    for (const auto& key : customProps) {
+                        out << "," << escapeCSV(key);
+                    }
+                    out << "\n";
+
+                    for (const auto& obj : state.objects) {
+                        std::string name = obj.properties.count("Name") ? obj.properties.at("Name").value : "";
+                        out << escapeCSV(obj.guid) << "," << escapeCSV(obj.type) << "," << escapeCSV(name);
+                        
                         for (const auto& key : customProps) {
-                            out << "," << escapeCSV(key);
+                            if (obj.properties.count(key)) {
+                                out << "," << escapeCSV(obj.properties.at(key).value);
+                            } else {
+                                out << ","; 
+                            }
                         }
                         out << "\n";
-
-                        for (const auto& obj : state.objects) {
-                            std::string name = obj.properties.count("Name") ? obj.properties.at("Name").value : "";
-                            out << escapeCSV(obj.guid) << "," << escapeCSV(obj.type) << "," << escapeCSV(name);
-                            
-                            for (const auto& key : customProps) {
-                                if (obj.properties.count(key)) {
-                                    out << "," << escapeCSV(obj.properties.at(key).value);
-                                } else {
-                                    out << ","; 
-                                }
-                            }
-                            out << "\n";
-                        }
-                        out.close();
                     }
+                    out.close();
                 }
             }
+        }
 
-            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
-            // =================================================================
-            // 2. Object-Based Spatial Search
-            // =================================================================
-            ImGui::TextDisabled("Spatial Search");
-            
+        // =================================================================
+        // 2. Object-Based Spatial Search (Collapsible)
+        // =================================================================
+        if (ImGui::CollapsingHeader("Spatial Search")) {
             if (state.objects.empty()) {
                 ImGui::TextWrapped("Select one or more elements first to use their combined bounding box for a spatial search.");
             } else {
@@ -246,14 +318,12 @@ namespace BimCore {
                     }
                 }
             }
+        }
 
-            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-
-            // =================================================================
-            // 3. Clipping Plane Search (Section Box)
-            // =================================================================
-            ImGui::TextDisabled("Section Box Search");
-            
+        // =================================================================
+        // 3. Clipping Plane Search (Collapsible)
+        // =================================================================
+        if (ImGui::CollapsingHeader("Clipping Planes Box Search")) {
             bool anyClipActive = state.showPlaneXMin || state.showPlaneXMax ||
                                  state.showPlaneYMin || state.showPlaneYMax ||
                                  state.showPlaneZMin || state.showPlaneZMax;
@@ -278,7 +348,6 @@ namespace BimCore {
                             float sMin[3] = { 1e9f, 1e9f, 1e9f };
                             float sMax[3] = {-1e9f,-1e9f,-1e9f };
 
-                            // Fetch AABB from BVH to make this lightning fast
                             if (!geom.bvhNodes.empty() && sub.bvhRootIndex < geom.bvhNodes.size()) {
                                 const auto& node = geom.bvhNodes[sub.bvhRootIndex];
                                 for(int j=0; j<3; ++j) { sMin[j] = node.aabbMin[j]; sMax[j] = node.aabbMax[j]; }
@@ -295,7 +364,6 @@ namespace BimCore {
                             bool match = true;
                             
                             if (fullyInsidePlanes) {
-                                // If "Completely Inside" is checked, the element's outermost bounds must not breach the active planes
                                 if (state.showPlaneXMin && sMin[0] < state.clipXMin) match = false;
                                 if (state.showPlaneXMax && sMax[0] > state.clipXMax) match = false;
                                 if (state.showPlaneYMin && sMin[1] < state.clipYMin) match = false;
@@ -303,8 +371,6 @@ namespace BimCore {
                                 if (state.showPlaneZMin && sMin[2] < state.clipZMin) match = false;
                                 if (state.showPlaneZMax && sMax[2] > state.clipZMax) match = false;
                             } else {
-                                // Default: Select anything touching/intersecting the active volume
-                                // (If the element's maximum bound is less than the minimum clip plane, it is entirely outside the volume)
                                 if (state.showPlaneXMin && sMax[0] < state.clipXMin) match = false;
                                 if (state.showPlaneXMax && sMin[0] > state.clipXMax) match = false;
                                 if (state.showPlaneYMin && sMax[1] < state.clipYMin) match = false;
@@ -332,6 +398,8 @@ namespace BimCore {
                 }
             }
         }
+
+        ImGui::End();
     }
 
 } // namespace BimCore

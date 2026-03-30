@@ -65,7 +65,6 @@ namespace BimCore {
     {
         bool isMeasuring = (selection.activeTool == InteractionTool::Measure);
         
-        // If measuring, we intentionally ignore ImGuizmo interactions so it doesn't steal focus from the viewport
         bool uiHovered = ImGui::GetIO().WantCaptureMouse || (!isMeasuring && ImGuizmo::IsOver());
         bool uiTyping  = ImGui::GetIO().WantTextInput;
 
@@ -92,18 +91,20 @@ namespace BimCore {
             if (uiNow && !m_uiWasDown) selection.showUI = !selection.showUI;
             m_uiWasDown = uiNow;
 
-            // --- MUTUAL EXCLUSIVITY: Switching tools explicitly ---
-            if (window.IsKeyPressed(config.KeyToolSelect)) { 
-                selection.activeTool = InteractionTool::Select; 
-            }
-            if (window.IsKeyPressed(config.KeyToolPan)) { 
-                selection.activeTool = InteractionTool::Move; 
-            }
-            if (window.IsKeyPressed(config.KeyToolOrbit)) { 
-                selection.activeTool = InteractionTool::Rotate; 
-            }
+            // --- THE NEW F3 KEYBINDING ---
+            const bool f3Now = window.IsKeyPressed(GLFW_KEY_F3);
+            if (f3Now && !m_f3WasDown) selection.showSearchPanel = !selection.showSearchPanel;
+            m_f3WasDown = f3Now;
+            
+            static bool cmdWasDown = false;
+            const bool cmdNow = window.IsKeyPressed(config.KeyToggleCommandPanel);
+            if (cmdNow && !m_cmdWasDown) selection.showCommandPanel = !selection.showCommandPanel;
+            m_cmdWasDown = cmdNow;
 
-            // Explicitly toggle Measure Tool via Hotkey
+            if (window.IsKeyPressed(config.KeyToolSelect)) selection.activeTool = InteractionTool::Select; 
+            if (window.IsKeyPressed(config.KeyToolPan))    selection.activeTool = InteractionTool::Move; 
+            if (window.IsKeyPressed(config.KeyToolOrbit))  selection.activeTool = InteractionTool::Rotate; 
+
             static bool mWasDown = false;
             bool mNow = window.IsKeyPressed(config.KeyToolMeasure);
             if (mNow && !mWasDown) {
@@ -126,9 +127,7 @@ namespace BimCore {
             m_tabWasDown = tabNow;
 
             const bool lNow = window.IsKeyPressed(config.KeyToggleLighting);
-            if (lNow && !m_lWasDown) {
-                currentLightingMode = (currentLightingMode == 0) ? 1 : 0;
-            }
+            if (lNow && !m_lWasDown) currentLightingMode = (currentLightingMode == 0) ? 1 : 0;
             m_lWasDown = lNow;
             
             selection.lightingMode = currentLightingMode; 
@@ -223,17 +222,12 @@ namespace BimCore {
                 }
             }
 
-            // --- CENTRALIZED MOUSE TRACKING ---
             bool mouseDown = window.IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT);
             bool mouseJustPressed = mouseDown && !m_mouseWasDown;
             Ray mouseRay = ScreenToWorldRay(mx, my, window.GetWidth(), window.GetHeight(), camera.GetViewMatrix(), camera.GetProjectionMatrix(), camera.GetPosition());
             
-            // Show clips if selecting OR measuring
             bool showClips = (selection.activeTool == InteractionTool::Select || selection.activeTool == InteractionTool::Measure);
 
-            // =======================================================
-            // MODE BRANCH 1: MEASURE TOOL EXCLUSIVE MODE
-            // =======================================================
             if (selection.activeTool == InteractionTool::Measure && !uiHovered && !documents.empty()) {
                 HitResult closestHit;
                 closestHit.distance = 1e9f;
@@ -261,11 +255,9 @@ namespace BimCore {
                 if (closestHit.hit) {
                     bool altPressed = window.IsKeyPressed(GLFW_KEY_LEFT_ALT);
                     if (altPressed) {
-                        // Free move
                         selection.currentSnapType = SnapType::Face;
                         selection.currentSnapPoint = closestHit.hitPoint;
                     } else {
-                        // Snap logic
                         float threshold = closestHit.distance * 0.02f;
 
                         float d0 = glm::length(closestHit.hitPoint - closestHit.hitV0);
@@ -306,7 +298,6 @@ namespace BimCore {
                         }
                     }
 
-                    // Register point only on a fresh click
                     if (mouseJustPressed) {
                         if (!selection.isMeasuringActive) {
                             selection.measureStartPoint = selection.currentSnapPoint;
@@ -320,12 +311,8 @@ namespace BimCore {
                     selection.currentSnapType = SnapType::None;
                 }
             } 
-            // =======================================================
-            // MODE BRANCH 2: SELECTION AND PLANE DRAGGING
-            // =======================================================
             else if (selection.activeTool != InteractionTool::Measure && !uiHovered && !documents.empty()) {
                 
-                // 1. Initiate Plane Dragging
                 if (mouseJustPressed) {
                     m_draggedPlane = CheckPlaneHits(mouseRay, selection, showClips, m_dragStartPoint);
                     if (m_draggedPlane != DraggedPlane::None) {
@@ -338,7 +325,6 @@ namespace BimCore {
                     }
                 }
 
-                // 2. Execute Dragging
                 if (mouseDown && m_draggedPlane != DraggedPlane::None) {
                     glm::vec3 axisDir(0.0f);
                     float* targetClip = nullptr;
@@ -362,7 +348,6 @@ namespace BimCore {
                     float delta = glm::dot(hit - m_dragStartPoint, axisDir);
                     *targetClip = m_dragStartClipValue + delta;
 
-                    // Prevent planes from crossing
                     if (m_draggedPlane == DraggedPlane::XMin && selection.clipXMin > selection.clipXMax) selection.clipXMin = selection.clipXMax - 0.01f;
                     if (m_draggedPlane == DraggedPlane::XMax && selection.clipXMax < selection.clipXMin) selection.clipXMax = selection.clipXMin + 0.01f;
                     if (m_draggedPlane == DraggedPlane::YMin && selection.clipYMin > selection.clipYMax) selection.clipYMin = selection.clipYMax - 0.01f;
@@ -371,7 +356,6 @@ namespace BimCore {
                     if (m_draggedPlane == DraggedPlane::ZMax && selection.clipZMax < selection.clipZMin) selection.clipZMax = selection.clipZMin + 0.01f;
 
                 } 
-                // 3. Object Selection (Only if we aren't dragging a plane)
                 else if (mouseJustPressed && m_draggedPlane == DraggedPlane::None) {
                     HandleMousePicking(window, camera, documents, selection, config, history);
                 }
@@ -381,8 +365,6 @@ namespace BimCore {
                 m_draggedPlane = DraggedPlane::None;
             }
 
-            // --- GLOBAL MOUSE TRACKER ---
-            // Placed securely at the end of the frame so clicks are never dropped or double-counted
             m_mouseWasDown = mouseDown;
 
         } else {
@@ -390,7 +372,6 @@ namespace BimCore {
         }
     }
 
-    // Refactored to act strictly as a sub-routine (no internal mouse tracking)
     void InputController::HandleMousePicking(Window& window, Camera& camera, std::vector<std::shared_ptr<SceneModel>>& documents, SelectionState& selection, const EngineConfig& config, CommandHistory& history) {
         double mx, my;
         window.GetMousePosition(mx, my);
@@ -522,7 +503,6 @@ namespace BimCore {
 
             selection.selectionChanged = true;
         }
-        // Background clicks purposely ignored here so selections persist!
     }
 
     Ray InputController::ScreenToWorldRay(double mouseX, double mouseY, int screenW, int screenH, const glm::mat4& view, const glm::mat4& proj, const glm::vec3& camPos) {

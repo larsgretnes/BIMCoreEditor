@@ -9,7 +9,8 @@
 #include <imgui.h>
 #include <ImGuizmo.h>
 
-#define ICON_FA_TIMES "\xef\x80\x8d" // Close/Clear icon
+#define ICON_FA_TIMES "\xef\x80\x8d" 
+#define ICON_FA_SEARCH "\xef\x80\x82" 
 
 namespace BimCore {
 
@@ -88,7 +89,7 @@ namespace BimCore {
         
         ImGuizmo::BeginFrame();
 
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGuiViewport* viewport = ImGui::GetMainViewport();
         const float statsPanelHeight = 75.0f;
         const float mainPanelHeight = viewport->WorkSize.y - statsPanelHeight;
 
@@ -97,11 +98,20 @@ namespace BimCore {
         ImGui::SetNextWindowSize(ImVec2(400.0f, mainPanelHeight), ImGuiCond_FirstUseEver);
 
         ImGui::Begin("Main Menu", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove);
-
-        // 1. Render Toolbar
-        UIToolbar::Render(state, documents, configMaxExplode, history, triggerRebuild);
         
-        // THE NEW GLOBAL CLEAR SELECTION BUTTON
+        // --- LAGRE MAIN PANEL BREDDEN TIL STATE ---
+        state.uiMainPanelWidth = ImGui::GetWindowSize().x; 
+
+        UIToolbar::Render(state, documents, configMaxExplode, history, triggerRebuild);
+
+        ImGui::Spacing();
+        if (ImGui::Button(ICON_FA_SEARCH " Advanced Search (F3)", ImVec2(-FLT_MIN, 0))) {
+            state.showSearchPanel = !state.showSearchPanel;
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        
         if (!state.objects.empty()) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
@@ -118,20 +128,33 @@ namespace BimCore {
             ImGui::Spacing();
         }
 
-        // 2. Render Modal 
         DrawResetModal(state, documents, triggerRebuild, history);
 
-        // 3. Render Search Panel (If docs exist)
         if (documents.empty()) {
             ImGui::TextDisabled("No models loaded.");
         } else {
-            UISearchPanel::Render(state, documents, triggerFocus);
             UIModelTree::Render(state, documents, triggerFocus, triggerRebuild);
         }
 
         ImGui::End();
 
-        // 4. Render 3D Canvas Overlays
+        // --- RENDER SEARCH PANEL DYNAMISK ---
+        if (!documents.empty() && state.showSearchPanel) {
+            
+            // Regn ut hvor panelet skal starte basert på Command Panelet
+            float searchY = viewport->WorkPos.y;
+            if (state.showCommandPanel) {
+                searchY += state.uiCommandPanelHeight; // Skyves under Command Panelet
+            }
+            
+            // Lås posisjonen fast inntil høyrekanten på Main Menu
+            ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + state.uiMainPanelWidth, searchY), ImGuiCond_Always);
+            ImGui::SetNextWindowSizeConstraints(ImVec2(350, 200), ImVec2(viewport->WorkSize.x / 2.0f, viewport->WorkSize.y));
+            ImGui::SetNextWindowSize(ImVec2(400.0f, mainPanelHeight), ImGuiCond_FirstUseEver);
+            
+            UISearchPanel::Render(state, documents, triggerFocus);
+        }
+
         UIGizmoOverlay::Render(state, documents, camera, history, window);
     }
 } // namespace BimCore

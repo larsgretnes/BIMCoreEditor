@@ -2,6 +2,7 @@
 // BimCore/apps/editor/ui/AppUI.cpp
 // =============================================================================
 #include "ui/AppUI.h"
+#include "ui/UICommandPanel.h"
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_wgpu.h>
 #include <imgui.h>
@@ -14,7 +15,7 @@ namespace BimCore {
         ImGui::NewFrame();
     }
 
-    void AppUI::Render(SelectionState& selection, GraphicsContext& graphics, std::vector<std::shared_ptr<SceneModel>>& documents, Camera& camera, float configMaxExplode, bool& triggerFocus, bool isFlightMode, bool& triggerRebuild, CommandHistory* history, GLFWwindow* window) {
+    void AppUI::Render(SelectionState& selection, GraphicsContext& graphics, std::vector<std::shared_ptr<SceneModel>>& documents, Camera& camera, EngineConfig& config, bool& triggerFocus, bool isFlightMode, bool& triggerRebuild, CommandHistory* history, GLFWwindow* window) {
 
         m_overlay.RenderFlyMode(isFlightMode);
 
@@ -27,16 +28,23 @@ namespace BimCore {
 
         bool editingActiveAtStartOfFrame = !state.activeEditGuid.empty();
 
-        UIMainPanel::Render(state, documents, configMaxExplode, triggerFocus, triggerRebuild, &camera, *history, window);
+        UIMainPanel::Render(state, documents, config.MaxExplodeFactor, triggerFocus, triggerRebuild, &camera, *history, window);
         
         m_overlay.RenderStatusPanel(state, documents);
         m_propertiesPanel.Render(state, documents, triggerFocus, *history);
-        
-        // Pass the history object to the context menu!
         m_overlay.RenderContextMenu(state, triggerFocus, *history);
 
+        UICommandPanel::Render(state, config, triggerFocus, triggerRebuild);
+
+        // --- OPPDATERT: Hierarkisk Escape-håndtering ---
         if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !editingActiveAtStartOfFrame) {
-            state.objects.clear();
+            if (state.showCommandPanel) {
+                // Lukk kommandopanelet først hvis det er åpent
+                state.showCommandPanel = false;
+            } else {
+                // Hvis panelet ikke er åpent, fjern valgte objekter som normalt
+                state.objects.clear();
+            }
         }
 
         ImGui::PopStyleVar();

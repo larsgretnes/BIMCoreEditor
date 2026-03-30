@@ -170,6 +170,7 @@ set(APP_SOURCES
     src/ui/UISearchPanel.cpp
     src/ui/UIModelTree.cpp
     src/ui/UIGizmoOverlay.cpp
+    src/ui/UICommandPanel.cpp
     src/input/InputController.cpp
     src/graphics/GraphicsContext.cpp
     src/graphics/Camera.cpp

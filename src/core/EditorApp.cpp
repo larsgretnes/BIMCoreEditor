@@ -100,8 +100,8 @@ namespace BimCore {
             m_uiSystem.NewFrame();
             bool triggerFocus = false;
 
-            m_uiSystem.Render(m_uiSystem.state, *m_graphics, m_sceneContext.GetDocuments(), *m_camera, m_config.MaxExplodeFactor, triggerFocus, m_input.IsFlightMode(), m_sceneContext.triggerRebuild, &m_commandHistory, m_window->GetNativeWindow());
-
+            m_uiSystem.Render(m_uiSystem.state, *m_graphics, m_sceneContext.GetDocuments(), *m_camera, m_config, triggerFocus, m_input.IsFlightMode(), m_sceneContext.triggerRebuild, &m_commandHistory, m_window->GetNativeWindow());
+            
             if (m_uiSystem.state.triggerLoad) {
                 m_uiSystem.state.triggerLoad = false;
                 auto fileDialog = pfd::open_file("Select File", m_currentFileDirectory, { "Supported Files", "*.ifc *.gltf *.glb *.stl *.3mf" });

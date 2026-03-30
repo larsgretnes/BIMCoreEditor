@@ -8,10 +8,10 @@ namespace BimCore {
     struct EngineConfig {
         // --- Centralized Application Info ---
         std::string AppName = "BIMCore Editor";
-        std::string AppVersion = "0.4"; 
+        std::string AppVersion = "0.5"; // <--- MILEPÆL: Oppdatert til 0.5!
 
-        int WindowWidth = 1600;  // <--- UPDATED
-        int WindowHeight = 900;  // <--- UPDATED
+        int WindowWidth = 1600;  
+        int WindowHeight = 900;  
 
         float BaseSpeed = 5.0f;
         float FlightFastMultiplier = 3.0f; 
@@ -56,6 +56,7 @@ namespace BimCore {
         int KeyHide = 72;
         int KeyFocus = 70;
         int KeyToggleUI = 85;
+        int KeyToggleCommandPanel = 96; 
         int KeyToggleNavigation = 258;
         int KeyToggleLighting = 76;
         int KeyToolSelect = 49;

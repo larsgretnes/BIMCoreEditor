@@ -46,7 +46,7 @@ namespace BimCore {
         ImGui::SetNextWindowSize(ImVec2(rightPanelWidth, viewport->WorkSize.y), ImGuiCond_FirstUseEver);
 
         ImGui::Begin("Properties", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove);
-
+        state.uiPropertiesPanelWidth = ImGui::GetWindowSize().x;
         if (state.objects.empty()) {
             ImGui::TextDisabled("Select an element to view properties.");
             ImGui::End();

@@ -5,21 +5,23 @@
 #include "ui/UIMainPanel.h"
 #include "ui/UIPropertiesPanel.h"
 #include "ui/UIStatusOverlay.h"
+#include "ui/UICommandPanel.h" // <--- INKLUDERT
 #include "ui/UIState.h"
 #include "graphics/GraphicsContext.h"
 #include "graphics/Camera.h"
 #include "scene/SceneModel.h"
+#include "core/EngineConfig.h" // <--- INKLUDERT
 #include "core/CommandHistory.h" 
 
-struct GLFWwindow; // <--- NEW: Forward declare GLFWwindow
+struct GLFWwindow; 
 
 namespace BimCore {
     class AppUI {
     public:
         void NewFrame();
         
-        // <--- FIXED: Added GLFWwindow* window to the end of the signature
-        void Render(SelectionState& selection, GraphicsContext& graphics, std::vector<std::shared_ptr<SceneModel>>& documents, Camera& camera, float configMaxExplode, bool& triggerFocus, bool isFlightMode, bool& triggerRebuild, CommandHistory* history, GLFWwindow* window);
+        // <--- OPPDATERT: Tar nå inn EngineConfig& config
+        void Render(SelectionState& selection, GraphicsContext& graphics, std::vector<std::shared_ptr<SceneModel>>& documents, Camera& camera, EngineConfig& config, bool& triggerFocus, bool isFlightMode, bool& triggerRebuild, CommandHistory* history, GLFWwindow* window);
 
         SelectionState state;
 
