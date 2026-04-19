@@ -38,6 +38,10 @@ out/
 .vs/
 *.user
 
+# Editor
+.vscode/
+.zed/
+
 # Dependencies
 _deps/
 .cache/
@@ -49,3 +53,4 @@ Thumbs.db
 # LKG
 imgui.ini
 settings.ini
+.claude/settings.local.json

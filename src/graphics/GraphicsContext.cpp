@@ -440,13 +440,16 @@ namespace BimCore {
         
         io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
         
-        ImFontConfig fontCfg; 
-        fontCfg.MergeMode = true; 
-        fontCfg.PixelSnapH = true; 
+        ImFontConfig defaultCfg;
+        defaultCfg.SizePixels = 13.0f;
+        io.Fonts->AddFontDefault(&defaultCfg);
+
+        ImFontConfig fontCfg;
+        fontCfg.MergeMode = true;
+        fontCfg.PixelSnapH = true;
         fontCfg.GlyphMinAdvanceX = 14.0f;
-        
+
         static const ImWchar iconRanges[] = { 0xe000, 0xf8ff, 0 };
-        io.Fonts->AddFontDefault();
         io.Fonts->AddFontFromFileTTF("fa-solid-900.ttf", 14.0f, &fontCfg, iconRanges);
         
         ImGui_ImplGlfw_InitForOther(window, true);
